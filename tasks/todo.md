@@ -1,7 +1,11 @@
 # Build order
 
+Near-term sequencing and the reasoning for it. **The authoritative feature checklist —
+including parity with `midnight-wallet-cli` — is `tasks/IMPLEMENTATION.md`.** This file says
+what order to build in; that one says what exists, what is missing, and what has no counterpart.
+
 Ordered so each step produces something usable rather than a layer waiting on the next one. The
-first four steps are the loop everything else gets debugged inside.
+first three stages are the loop everything else gets debugged inside.
 
 ## 1 · Walking skeleton — DONE
 

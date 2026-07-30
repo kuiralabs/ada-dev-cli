@@ -9,7 +9,8 @@ the same primitives through a built-in MCP server.
 
 > **Status: early.** The devnet and chain-query commands work — `localnet`, `tip`, `info`,
 > `config`. Wallets, transfers, assets and swaps are next. Nothing is published to npm yet.
-> See `docs/COMMANDS.md` for the designed surface and `tasks/todo.md` for progress.
+> See `docs/COMMANDS.md` for the designed surface and `tasks/IMPLEMENTATION.md` for the
+> feature checklist and current status.
 
 ## Why this exists
 
