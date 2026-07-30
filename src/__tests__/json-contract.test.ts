@@ -127,3 +127,29 @@ describe('capture redirects output away from stdout', () => {
     expect(captured).toHaveLength(2);
   });
 });
+
+describe('help scopes to a topic in json mode', () => {
+  // The bug: the json branch ran before the topic check, so `help tip --json`
+  // returned all ten commands and `help nonesuch --json` returned success.
+  it('returns one command_info for a known topic, not the whole list', async () => {
+    const help = (await import('../commands/help.ts')).default;
+    const { parseArgs } = await import('../lib/argv.ts');
+    await help(parseArgs(['help', 'tip', '--json']));
+    const doc = one();
+    expect(doc.commands).toBeUndefined();
+    expect((doc.command_info as Record<string, unknown>).name).toBe('tip');
+  });
+
+  it('fails rather than succeeding for an unknown topic', async () => {
+    const help = (await import('../commands/help.ts')).default;
+    const { parseArgs } = await import('../lib/argv.ts');
+    await expect(help(parseArgs(['help', 'nonesuch', '--json']))).rejects.toThrow(/no such command/);
+  });
+
+  it('still returns the full list with no topic', async () => {
+    const help = (await import('../commands/help.ts')).default;
+    const { parseArgs } = await import('../lib/argv.ts');
+    await help(parseArgs(['help', '--json']));
+    expect(Array.isArray(one().commands)).toBe(true);
+  });
+});

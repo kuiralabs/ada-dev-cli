@@ -3,6 +3,7 @@
 import type { Args } from '../lib/argv.ts';
 import { hasFlag } from '../lib/argv.ts';
 import { writeJson } from '../lib/json-output.ts';
+import { usageError } from '../lib/errors.ts';
 import { PKG_VERSION } from '../lib/pkg.ts';
 import { EXIT_INVALID_ARGS } from '../lib/exit-codes.ts';
 import { bold, dim } from '../ui/colors.ts';
@@ -35,9 +36,23 @@ const GLOBAL_FLAGS: Array<[string, string]> = [
 ];
 
 export default async function help(args: Args): Promise<void> {
+  const [topic] = args.positionals;
+
   if (hasFlag(args, 'json')) {
+    // A topic must narrow the result. The first version ignored it and returned
+    // every command, so an agent asking about one command got ten and had to
+    // filter — and an agent asking about a command that does not exist got a
+    // success. Both are the kind of quiet wrongness the output contract exists
+    // to prevent.
+    if (topic) {
+      const doc = COMMANDS.find((c) => c.name === topic);
+      if (!doc) {
+        throw usageError(`no such command: ${topic}`, 'run `ada help --json` for the command list');
+      }
+      writeJson({ version: PKG_VERSION, command_info: doc });
+      return;
+    }
     writeJson({
-      ok: true,
       version: PKG_VERSION,
       commands: COMMANDS.map(({ name, usage, summary, implemented }) => ({ name, usage, summary, implemented })),
       globalFlags: GLOBAL_FLAGS.map(([flag, description]) => ({ flag, description })),
@@ -45,7 +60,6 @@ export default async function help(args: Args): Promise<void> {
     return;
   }
 
-  const [topic] = args.positionals;
   if (topic) {
     const doc = COMMANDS.find((c) => c.name === topic);
     if (!doc) {
