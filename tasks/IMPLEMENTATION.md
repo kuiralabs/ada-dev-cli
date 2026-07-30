@@ -6,7 +6,8 @@ worse than none, because it gets trusted.
 Legend: `[x]` done and exercised against a real chain · `[ ]` not built · `[—]` deliberately not
 building it, reason given · `[!]` blocked by something outside this repo.
 
-**Now:** 16 commands · 25 MCP tools · 187 offline tests · stages 1–6 closed · publish held.
+**Now:** 16 commands · 25 MCP tools · 187 offline tests · stages 1–6 closed · Aiken contracts specced,
+not started · publish held.
 
 ---
 
@@ -69,7 +70,46 @@ building it, reason given · `[!]` blocked by something outside this repo.
 - [x] **Verified live** — 20 Silk for 50 ADA, both balances reconciled to the lovelace
 - [x] **Adversarial cases each failing safely** — replay, maker-signs-as-taker, wrong network, expired, unsigned, garbage, unknown version, misrepresented
 
-## 7 — Publish — held
+## 7 — Contracts (Aiken)
+
+Aiken is Cardano's contract language; its compiler emits a CIP-57 `plutus.json` blueprint, which
+MeshJS already reads. Nothing here needs a new dependency.
+
+**The verbs are not `mn`'s, deliberately.** On Midnight a contract is a stateful object: deploy
+creates it, calling a circuit mutates it, its state is read from it. On Cardano a validator is a pure
+predicate over `(datum, redeemer, context)`. It holds nothing. So there is no deploy — a script's
+address is derived from its hash and exists the moment it compiles; state lives in datums on UTxOs at
+that address, not in the script; and a call is a *spend* of one of those UTxOs. Copying the four
+Midnight verbs would name operations this chain does not have.
+
+- [ ] **`contract build` / `contract check`** — delegate to `aiken`, which owns compilation and the validator's own tests. Detect absence and name the install command, as with `cardano-address`
+- [ ] **`contract inspect`** — validators, purposes, datum and redeemer schemas, hash, and any unapplied parameters. The blueprint is to this what `contract-info.json` is to Compact
+- [ ] **`contract address`** — derived from the blueprint hash, network-discriminated. Must refuse to answer for a validator with unapplied parameters and say which are missing: applying parameters changes the code, so it changes the hash, so it changes the address
+- [ ] **`contract lock`** — pay to a script address with a datum
+- [ ] **`contract unlock`** — spend a script UTxO with a redeemer. This is the call
+- [ ] **`contract utxos`** — what sits at the script address with datums decoded. This is the state
+- [ ] **`contract publish`** — a CIP-33 reference script: the only operation that genuinely publishes code once, and the honest reading of "deploy"
+- [ ] **`contract simulate`** — execution units without submitting, so a budget failure is found before a fee is paid
+- [ ] **Inline datums are the default** — the devnet indexer serves no datum-by-hash endpoint, so a hash-stored datum cannot be recovered from the chain. Datum-hash mode must demand the datum up front rather than failing at spend time
+- [ ] **Collateral selected explicitly** — a pure-ADA UTxO, at 150% of fee. After any mint a wallet's outputs may all carry assets, and every script transaction then fails for a reason that looks nothing like its cause. The error must say how to make one
+- [ ] **Evaluation on, with a fallback** — the redeemer evaluator is opt-in and off, because running it on plain payments broke the devnet. Script paths need it on: provider first, offline evaluator second, seeded with the chain's real cost models rather than the mainnet defaults it assumes
+- [ ] **Execution budget is its own error class** — exceeding the memory or step limit is neither insufficient funds nor an invalid transaction, and it is the failure a contract author hits most
+- [ ] **Oversized script names the remedy** — inlining a large validator breaches the transaction size limit, which is exactly what reference scripts exist to solve
+- [ ] **Plutus version read from the blueprint**, never assumed
+- [ ] **Datums and redeemers validated against the declared schema** — CIP-57 gives every argument a `dataType`, so a malformed value is rejected before a transaction is built, naming the expected shape. `mn` has to guess at this boundary; we do not
+- [ ] **Blueprint discovery tolerates real layouts** — `plutus.json` sits at the project root only *by convention*, and `mn` carries a list of candidate directories precisely because projects that differ silently miss the scan. Plus `--module` and `--validator`, the axis `aiken` itself uses
+- [ ] **Reference inputs, validity intervals, required signers** — reading a UTxO without spending it, deadline bounds, and signature checks. All present in MeshJS, and a validator surface without them cannot express the common patterns
+- [ ] **Money paths inherit the existing rules** — `lock`, `unlock` and `publish` are dry-run by default, `--yes` to submit, two-step confirmation over MCP
+- [ ] **Verified live** — a validator locked, unlocked and read back on devnet, and the same on preprod
+- [ ] **Cross-checked against `cardano-cli`** — `aiken blueprint convert --to cardano-cli` emits the envelope it consumes, giving a second independent opinion on a script
+- [—] **Withdrawal and certificate validators** — the blueprint's `withdraw` and `publish` purposes. MeshJS supports both; out of scope for v1, recorded so the absence is a decision
+
+**Open, and not decided by the spike.** Plutus minting policies carry `purpose: mint` in the same
+blueprint, but `asset mint` builds a native script today. Whether Plutus minting extends that command
+or becomes `contract mint` is a genuine fork: picking wrong yields either a bloated `asset` or two
+places that mint.
+
+## 8 — Publish — held
 
 - [ ] **npm, `docs/PUBLISHING.md`, demo, Builder Tools submission**
 
@@ -86,10 +126,16 @@ itself**, cross-checked against an independent implementation.
 ## Declined — decided, so they stop reappearing as gaps
 
 - [—] **`serve`** — Cardano's dApp-connector convention is a browser-wallet standard; a CLI competing with it helps nobody
-- [—] **`dev`** — no compile step in the default path, so there is nothing to watch
-- [—] **`contract`** — no deploy step exists; a script travels with the transaction that uses it, or sits as a reference output
-- [—] **`test`** — `mn` generates suites for Compact dApps; there is no equivalent artefact here to generate tests *for*
+- [ ] **`dev`** — *decline reversed by the Aiken spike.* Declined when nothing here compiled; Aiken has `.ak` sources and a real build step, so a watch-compile loop finally has something to watch. `mn`'s version also provisions funded dev wallets and binds a keypress to deploy — every part of that has a counterpart once stage 7 lands
+- [—] **`test`** — `mn test` is *end-to-end dApp* testing: suite discovery, prep steps, browser mode, assertions, teardown. `aiken check` runs a validator's own unit and property tests. Delegating to Aiken in stage 7 covers the second and none of the first, which stays out of scope
 - [—] **`dust register` / `dust status`** — Midnight pays fees in a separate token that must be registered for and monitored. Cardano pays in ADA from the same UTxOs, so the category disappears. Worth stating so the absence reads as one fewer problem, not one fewer feature
+
+**Already covered under another name**, listed because a name-by-name comparison otherwise reports
+them missing:
+
+- [x] **`generate`** — deprecated upstream in favour of `wallet generate`, which is what we built
+- [x] **`inspect-cost`** — split in two here: `params` carries the standing limits, including the execution-unit budget and its prices, and `contract simulate` will report what one transaction actually spends against them
+- [!] **`genesis-address`** — this is `localnet addresses`, blocked above for the same reason: the devkit prints its pre-funded addresses to a log and exposes them nowhere machine-readable
 
 ## Standing rules
 
