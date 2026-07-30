@@ -10,6 +10,9 @@ chain inspection. Native assets and atomic swaps are designed but not built. **N
 ada help --json
 ```
 
+If `ada` is not found, it has not been linked yet — the project is not on npm. From a clone:
+`npm install && npm run build && npm link`.
+
 Every entry carries `implemented: true|false`. Trust that over this document if they ever disagree.
 
 ---

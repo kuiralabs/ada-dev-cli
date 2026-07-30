@@ -7,10 +7,28 @@ Built for two audiences: **developers** starting a Cardano project who want a fu
 local chain in under five minutes, and **AI agents** (Claude Code, Cursor, any MCP client) using
 the same primitives through a built-in MCP server.
 
-> **Status: early.** The devnet and chain-query commands work — `localnet`, `tip`, `info`,
-> `config`. Wallets, transfers, assets and swaps are next. Nothing is published to npm yet.
-> See `docs/COMMANDS.md` for the designed surface and `tasks/IMPLEMENTATION.md` for the
-> feature checklist and current status.
+> **Status: early.** Wallets, balances, funding, ADA transfers, the devnet lifecycle and chain
+> inspection all work. Native assets and atomic swaps are next. **Not published to npm yet** — see
+> Install below. `ada help --json` reports which commands are implemented; `tasks/IMPLEMENTATION.md`
+> is the full checklist.
+
+## Install
+
+Not on npm yet, so link it from a clone:
+
+```sh
+git clone https://github.com/kuiralabs/ada-wallet-cli
+cd ada-wallet-cli
+npm install
+npm run build     # the global binary runs the bundle, not the sources
+npm link          # puts `ada` on your PATH
+```
+
+Then `ada status` should answer. To remove it: `npm unlink -g ada-wallet-cli`.
+
+**Working on the code?** `npx tsx src/ada.ts <command>` runs the sources directly, so you skip the
+rebuild. The linked `ada` keeps running the last `npm run build` until you run it again — worth
+knowing before you wonder why a change had no effect.
 
 ## Why this exists
 
