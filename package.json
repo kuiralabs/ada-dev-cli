@@ -1,7 +1,7 @@
 {
   "name": "ada-wallet-cli",
   "version": "0.0.1",
-  "description": "Cardano CLI wallet \u2014 wallets, balances, transfers, native assets, atomic swaps and a local devnet from one command surface.",
+  "description": "Cardano CLI wallet — wallets, balances, transfers, native assets, atomic swaps and a local devnet from one command surface.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "nel349",
@@ -46,5 +46,8 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@meshsdk/core": "^1.9.1"
   }
 }

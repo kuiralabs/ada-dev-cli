@@ -21,16 +21,18 @@ export const COMMANDS: CommandDoc[] = [
   { name: 'info', usage: 'ada info', summary: 'Active network, endpoints and config location', implemented: true },
   { name: 'config', usage: 'ada config <list|get|set|unset> [key] [value]', summary: 'Persistent configuration', implemented: true },
   { name: 'help', usage: 'ada help [command]', summary: 'This message', implemented: true },
-  { name: 'wallet', usage: 'ada wallet <generate|list|use|info|remove>', summary: 'Manage wallets', implemented: false },
-  { name: 'balance', usage: 'ada balance [address]', summary: 'ADA and native assets held', implemented: false },
-  { name: 'utxos', usage: 'ada utxos [address]', summary: 'Unspent outputs behind a balance', implemented: false },
-  { name: 'airdrop', usage: 'ada airdrop <amount>', summary: 'Fund an address from the devnet faucet', implemented: false },
-  { name: 'transfer', usage: 'ada transfer <to> <amount>', summary: 'Send ADA', implemented: false },
+  { name: 'wallet', usage: 'ada wallet <generate|list|use|info|remove> [name]', summary: 'Manage wallets', implemented: true },
+  { name: 'balance', usage: 'ada balance [wallet|address]', summary: 'ADA and native assets held', implemented: true },
+  { name: 'utxos', usage: 'ada utxos [wallet|address]', summary: 'Unspent outputs behind a balance', implemented: true },
+  { name: 'airdrop', usage: 'ada airdrop <ada> [--address <addr>]', summary: 'Fund from the devnet faucet', implemented: true },
+  { name: 'transfer', usage: 'ada transfer <to> <ada> [--yes]', summary: 'Send ADA — dry run without --yes', implemented: true },
 ];
 
 const GLOBAL_FLAGS: Array<[string, string]> = [
   ['--json', 'machine-readable output on stdout, nothing else'],
   ['--network <name>', 'override the configured network for this run'],
+  ['--wallet <name>', 'act on a named wallet instead of the active one'],
+  ['--yes', 'confirm an action that moves money or deletes keys'],
   ['--version, -v', 'print the version'],
   ['--help, -h', 'this message'],
 ];

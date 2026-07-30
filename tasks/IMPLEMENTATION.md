@@ -18,8 +18,8 @@ counterpart, reason given) · **open** (needs a decision)
 
 | | Count |
 |---|---|
-| Done | 5 commands, 53 offline tests, devnet lifecycle proven end to end, agent output contract |
-| Next | wallets, balance, utxos, airdrop, transfer |
+| Done | 10 commands, 93 offline tests, agent output contract, **the fund-read-transfer loop proven on a real chain** |
+| Next | MCP server, `params`, `localnet addresses`, preprod verification |
 | Planned | MCP server, assets, swap, publish |
 | No counterpart | 2 (`dust register`, `dust status`) |
 | Open | 3 (`serve`, `dev`, `contract`) |
@@ -30,15 +30,15 @@ counterpart, reason given) · **open** (needs a decision)
 
 | `mn` command | `ada` counterpart | Status |
 |---|---|---|
-| `wallet generate` | `wallet generate` | **next** |
-| `wallet list` | `wallet list` | **next** |
-| `wallet use` | `wallet use` | **next** |
-| `wallet info` | `wallet info` — payment **and** stake address, derivation path | **next** |
-| `wallet remove` | `wallet remove` | **next** |
+| `wallet generate` | `wallet generate` | **done** |
+| `wallet list` | `wallet list` | **done** |
+| `wallet use` | `wallet use` | **done** |
+| `wallet info` | `wallet info` — payment **and** stake address, derivation path | **done** |
+| `wallet remove` | `wallet remove` — requires `--yes` | **done** |
 | `info` | `info` | **done** |
-| `balance` | `balance` — ADA **and** every native asset held | **next** |
-| `transfer` | `transfer` — surfaces fee, change and min-value before submitting | **next** |
-| `airdrop` | `airdrop` — devkit faucet (`topup`) | **next** |
+| `balance` | `balance` — ADA **and** every native asset held | **done** |
+| `transfer` | `transfer` — dry run by default; `--yes` submits | **done** |
+| `airdrop` | `airdrop` — devkit faucet; devnet only | **done** |
 | `address --seed` | `address derive` — delegates to `cardano-address`, never reimplemented | planned · stage 4 |
 | `genesis-address` | `localnet addresses` — the 20 pre-funded devnet addresses | planned · stage 2 |
 | `inspect-cost` | `params` — protocol parameters: fee coefficients, min-UTxO, max sizes | planned · stage 2 |
@@ -92,8 +92,8 @@ These are additions, not parity gaps. They exist because the ledger is different
 
 | `ada` command | Why it has no Midnight equivalent | Status |
 |---|---|---|
-| `utxos` | Balance is a sum over a UTxO set. When a number looks wrong, the next question is always which outputs produced it | **next** |
-| `fee estimate` | Fees are a linear function of size and knowable before submitting — a dry run is possible here and is not on Midnight | **next** |
+| `utxos` | Balance is a sum over a UTxO set. When a number looks wrong, the next question is always which outputs produced it | **done** |
+| `fee estimate` | Fees are knowable before submitting — a dry run is possible here and is not on Midnight | **done** — it is `transfer` without `--yes`, so it cannot disagree with the real path |
 | `asset mint` | Native assets are ledger-level; no contract is needed to create a token | planned · stage 5 |
 | `asset send` | Many distinct assets move in one output as a bundle | planned · stage 5 |
 | `swap build` | Two-party atomic swap needs no smart contract — a ledger primitive | planned · stage 6 |
@@ -148,9 +148,12 @@ Detail and ordering rationale in `tasks/todo.md`. Summary of what each stage clo
 fails-before/passes-after regressions for the readiness wait, the process-group stop and the flag
 parser.
 
-**2 · Wallets and money — next.** Wallets, `balance`, `utxos`, `airdrop`, `transfer`,
-`fee estimate`, `params`, `localnet addresses`. **Closing this is what unblocks the SDK work**,
-because it is the fund-read-transfer loop everything gets debugged inside.
+**2 · Wallets and money — done.** Wallets, `balance`, `utxos`, `airdrop`, `transfer` with a
+dry-run-by-default shape that makes `fee estimate` the same code path. Verified on a live devnet:
+funded 1000 ADA, sent 25, fee 0.169813, both balances reconciled to the lovelace. **This is the
+loop the SDK work gets debugged inside.**
+
+Still open in this area: `params` and `localnet addresses`, neither of which blocks anything.
 
 **3 · Agent surface — partly landed early.** The `--json` envelope, the stable `code` taxonomy and
 `docs/SKILL.md` are done, because the contract could not be retrofitted once commands multiplied.

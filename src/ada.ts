@@ -15,6 +15,11 @@ type CommandModule = { default: (args: ReturnType<typeof parseArgs>) => Promise<
 
 const COMMAND_LOADERS: Record<string, () => Promise<CommandModule>> = {
   localnet: () => import('./commands/localnet.ts'),
+  wallet: () => import('./commands/wallet.ts'),
+  balance: () => import('./commands/balance.ts'),
+  utxos: () => import('./commands/utxos.ts'),
+  airdrop: () => import('./commands/airdrop.ts'),
+  transfer: () => import('./commands/transfer.ts'),
   tip: () => import('./commands/tip.ts'),
   info: () => import('./commands/info.ts'),
   config: () => import('./commands/config.ts'),

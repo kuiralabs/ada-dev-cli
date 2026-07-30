@@ -24,17 +24,23 @@ is disabled by default.
 `ada-mcp` moved to stage 3, where it is written against the real command surface rather than
 ahead of it.
 
-## 2 · Wallets and money
+## 2 · Wallets and money — DONE
 
-- [ ] `wallet generate/list/use/info/remove`, encrypted key storage, passphrase never on argv
-- [ ] `balance` — ADA **and** native assets
-- [ ] `utxos`
-- [ ] `airdrop` via the devnet faucet
-- [ ] `transfer`, surfacing fee, change, and the minimum-value check before submitting
-- [ ] `fee estimate`
+- [x] `wallet generate/list/use/info/remove` with a named-wallet model and one active wallet
+- [x] Key storage at 0600 in a 0700 directory, **unencrypted**, and **mainnet refused outright** as
+      the honest consequence. Encryption would need a passphrase, a passphrase needs a prompt, and no
+      path an agent needs may block on a prompt
+- [x] `balance` — ADA and every native asset, for a wallet or a raw address
+- [x] `utxos` — first-class, because balance is a sum over a set
+- [x] `airdrop` via the devkit faucet, refusing on any network that has none
+- [x] `transfer` — **dry run by default, `--yes` submits.** One code path, so the fee shown is the
+      fee charged and `fee estimate` cannot disagree with the real thing
+- [x] Exact integer amounts throughout: no floating point touches money
 
-**Done when:** fund an address, read its balance, send a transfer, all on the local devnet. This is
-the exit bar that unblocks the SDK work.
+**Done:** verified on a live devnet — 1000 ADA funded, 25 sent, fee 0.169813, alice 974.830187 and
+bob 25, reconciling to the lovelace.
+
+Deferred, not blocking: `params`, `localnet addresses`.
 
 ## 3 · Agent surface — contract landed, server pending
 

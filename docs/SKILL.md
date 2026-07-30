@@ -3,9 +3,8 @@
 You have access to the `ada` CLI for Cardano. This document teaches you how to drive it. Read it
 once at the start of a session; use it as reference throughout.
 
-**Scope note:** this covers the commands that exist today — the local devnet and chain queries.
-Wallets, transfers, assets and swaps are designed but not built. **Never invent a command.** Ask the
-tool what it has:
+**Scope note:** wallets, balances, funding and ADA transfers work. Native assets and atomic swaps
+are designed but not built. **Never invent a command.** Ask the tool what it has:
 
 ```
 ada help --json
@@ -77,9 +76,35 @@ Never pass a boolean flag a value. `--json` and `--help` take none; `ada localne
 | "switch to preprod" | `ada config set network preprod --json` |
 | "show my settings" | `ada config list --json` |
 | "what can this tool do?" | `ada help --json` |
+| "create a wallet called alice" | `ada wallet generate alice --json` |
+| "list wallets" | `ada wallet list --json` |
+| "switch to bob" | `ada wallet use bob --json` |
+| "what's my address?" | `ada wallet info --json` |
+| "delete wallet alice" | `ada wallet remove alice --yes --json` — ask consent first |
+| "what's my balance?" | `ada balance --json` |
+| "balance of addr_test1..." | `ada balance addr_test1... --json` |
+| "show my UTxOs" / "why is my balance that?" | `ada utxos --json` |
+| "fund my wallet" (devnet only) | `ada airdrop 1000 --json` |
+| "what would it cost to send 10 ADA?" | `ada transfer <addr> 10 --json` — **no `--yes`, so nothing is sent** |
+| "send 10 ADA to X" | dry run first, show the fee, get consent, then add `--yes` |
 
-Anything about wallets, balances, sending, assets or swaps: **not built yet.** Say so plainly rather
-than improvising a command.
+Anything about native assets or swaps: **not built yet.** Say so plainly rather than improvising.
+
+## Sending ADA — the two-step flow
+
+`ada transfer` **does not send anything without `--yes`.** Use that.
+
+1. Run `ada transfer <address> <ada> --json`. The transaction is fully built against live
+   protocol parameters and you get back `submitted: false` plus the real `feeAda`, `changeAda`,
+   `totalLovelace` and every output.
+2. Show the user the amount, the recipient and the fee **verbatim**. Do not paraphrase or round them.
+3. Wait for explicit consent.
+4. If yes, run the same command with `--yes`. You get `submitted: true` and a `txHash`.
+5. A transfer needs one block to confirm before it shows in a balance. Wait a few seconds, then
+   `ada balance --json`.
+
+Never pass `--yes` on the first call. The dry run costs nothing and it is the only chance to see the
+fee before it is paid.
 
 ## Canonical flow — first session
 
@@ -87,7 +112,11 @@ than improvising a command.
    several minutes; after that it is about nine seconds. Warn the user before the first run.
 2. `ada tip --json` — confirm blocks are being produced. Run it twice a few seconds apart; `height`
    should increase.
-3. `ada info --json` — confirm which network is active and that the API is reachable.
+3. `ada wallet generate alice --json` — creates a wallet and makes it active.
+4. `ada airdrop 1000 --json` — fund it from the faucet. Devnet only.
+5. Wait a few seconds for a block, then `ada balance --json` — confirm the funds arrived.
+
+At step 5 the user can transact.
 
 ## Error recovery
 
@@ -107,6 +136,13 @@ Match on `code`, and prefer `hint` when it is present.
 | `tool_missing` | `yaci-devkit` is not installed | The `hint` has the install command |
 | `network_error` | An HTTP call failed | Retry once. If it persists, report it |
 | `unknown_command` | No such command | `ada help --json` for the real list |
+| `no_utxos` | The wallet holds nothing to spend | `ada airdrop 1000 --json` on devnet |
+| `insufficient_funds` | Cannot cover the amount plus the fee | The message states available versus needed. Fund it or send less |
+| `output_below_min_value` | An output is under the ledger's minimum | Send more. Every output must hold a minimum proportional to its size |
+| `build_failed` | The transaction could not be constructed | Read the message; it carries the builder's reason |
+| `submit_failed` | The chain rejected it after signing | Chain state moved between build and submit. Retry once |
+| `mainnet_refused` | A wallet operation was attempted on mainnet | Not supported. Keys are stored unencrypted; use a test network |
+| `wallet_open_failed` | The stored phrase could not be loaded | The wallet file may be corrupt |
 
 **On a devnet failure, read `logTail` before guessing.** It is included in the response precisely so
 you do not have to open a file, and it has named the cause every time so far.
@@ -116,6 +152,9 @@ you do not have to open a file, and it has named the cause every time so far.
 **Read commands are safe to run without asking.** `tip`, `info`, `localnet status`, `localnet logs`,
 `config list`, `config get`, `help`. Run them freely to answer questions.
 
+**Read commands include** `wallet list`, `wallet info`, `balance`, `utxos`, and a `transfer`
+**without** `--yes` — that one builds a transaction but changes nothing.
+
 **Ask first for anything that changes state.**
 
 - `localnet up` — downloads up to 1.4 GB on first run and starts long-lived processes. Say so.
@@ -124,9 +163,18 @@ you do not have to open a file, and it has named the cause every time so far.
 - `localnet bootstrap` — a large download.
 - `config set` / `config unset` — changes persistent settings the user relies on. Prefer
   `--network <name>` on a single command over changing the stored default.
+- `wallet generate` — creates a key and **makes it the active wallet**, changing what later
+  commands act on.
+- `wallet remove --yes` — deletes the only copy of a recovery phrase. Irreversible.
+- `transfer --yes` — moves money. Follow the two-step flow above.
+- `airdrop` — safe on devnet, where the money is worthless.
 
-**When transfers exist, they will require explicit consent for the amount and the recipient,
-restated verbatim and never paraphrased.** They do not exist yet.
+**Transfers require explicit consent for the amount and the recipient, restated verbatim and never
+paraphrased.** The dry run exists so you can show real numbers rather than estimates.
+
+**Wallet keys are stored unencrypted** at `~/.ada/wallets`. Never print a recovery phrase unless the
+user explicitly asks; `wallet info` omits it unless `--show-mnemonic` is passed. Mainnet is refused
+outright for this reason.
 
 **Never invent a command or a flag.** If `ada help --json` does not list it, it is not there.
 
