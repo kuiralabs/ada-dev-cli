@@ -1,7 +1,10 @@
 # How it fits together
 
-Written for someone who has to change this code. It explains the shape, then walks a real command
-from keystroke to output.
+Written for someone who has to change this code — it explains how *our* code is arranged, then
+walks a command from keystroke to output.
+
+**New here? Read `docs/STACK.md` first.** It explains what the pieces are, who makes them, and why
+each one is in the stack. This document assumes you already know what Yaci DevKit and MeshJS are.
 
 ---
 

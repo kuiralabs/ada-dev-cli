@@ -61,9 +61,10 @@ Installing will provide two binaries: `ada` and `ada-mcp`.
 
 ## How it works
 
-`docs/ARCHITECTURE.md` walks a command from keystroke to output, and explains the two things
-that are easy to get wrong: the devnet serves two different HTTP surfaces, and stopping it means
-signalling a process group rather than a process.
+- `docs/STACK.md` — **start here.** What every piece in the stack is, who makes it, and why it is
+  there. Yaci DevKit, Yaci Store, MeshJS, cardano-node, and the two APIs the local chain serves.
+- `docs/ARCHITECTURE.md` — how our own code is arranged, and a command traced end to end.
+- `docs/DEVNET.md` — running the local chain, and diagnosing it when it will not start.
 
 ## Built on
 
