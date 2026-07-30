@@ -4,7 +4,7 @@
 // for a wallet or a provider and never construct one, so network selection,
 // provider choice and the mainnet refusal are decided once.
 
-import { MeshWallet, YaciProvider, BlockfrostProvider, MeshTxBuilder } from '@meshsdk/core';
+import { MeshWallet, YaciProvider, BlockfrostProvider, KoiosProvider, MeshTxBuilder } from '@meshsdk/core';
 import type { NetworkName, ResolvedNetwork } from './cli-config.ts';
 import { configError, AdaError } from './errors.ts';
 import { EXIT_INTERNAL } from './exit-codes.ts';
@@ -33,32 +33,52 @@ export function meshNetworkName(network: NetworkName): 'mainnet' | 'preprod' | '
   }
 }
 
-export type Provider = YaciProvider | BlockfrostProvider;
+export type Provider = YaciProvider | BlockfrostProvider | KoiosProvider;
 
 /**
  * Build a chain provider for the resolved network.
  *
- * The devnet gets YaciProvider, which takes both the query URL and the control
- * URL — the same two-API split this tool already models, and it is what makes the
- * faucet reachable through the same object.
+ * **No signup is required to use a public network.** Koios is a free,
+ * community-run Cardano API and is the default for preprod, preview and mainnet.
+ * Requiring an account before a developer can read a testnet balance is a bad
+ * first experience, and it is avoidable.
  *
- * Public networks get BlockfrostProvider, which needs a project key. There is no
- * key handling yet, so this fails with the exact command to configure one rather
- * than producing a provider that will 403 later at a confusing point.
+ * Blockfrost stays available as an opt-in for anyone who wants higher rate limits
+ * or already has a key: set `ADA_BLOCKFROST_KEY`. In the environment, never as an
+ * argument — command lines land in shell history and process listings.
+ *
+ * The devnet gets YaciProvider, which takes both the query URL and the control
+ * URL — the same two-API split this tool already models, and what makes the faucet
+ * reachable through the same object.
  */
 export function makeProvider(network: ResolvedNetwork): Provider {
   if (network.isLocal) {
     return new YaciProvider(`${network.apiUrl}/api/v1/`, network.adminUrl);
   }
 
-  const key = process.env.ADA_BLOCKFROST_KEY;
-  if (!key) {
-    throw configError(
-      `no API key available for ${network.name}`,
-      'set ADA_BLOCKFROST_KEY in the environment — a key must never be passed as an argument',
-    );
+  const blockfrostKey = process.env.ADA_BLOCKFROST_KEY;
+  if (blockfrostKey) return new BlockfrostProvider(blockfrostKey);
+
+  // The network-name form is the one that works anonymously. Passing a base URL
+  // instead makes the provider send an empty auth header, which Koios rejects with
+  // 403 — a confusing failure for something that needs no credentials at all.
+  return new KoiosProvider(koiosNetwork(network.name));
+}
+
+/** Koios names its networks the same way we do, except mainnet is 'api'. */
+function koiosNetwork(name: NetworkName): 'api' | 'preprod' | 'preview' {
+  switch (name) {
+    case 'mainnet': return 'api';
+    case 'preview': return 'preview';
+    default: return 'preprod';
   }
-  return new BlockfrostProvider(key);
+}
+
+/** Which provider answered, for reporting. */
+export function providerName(provider: Provider): 'yaci' | 'blockfrost' | 'koios' {
+  if (provider instanceof YaciProvider) return 'yaci';
+  if (provider instanceof BlockfrostProvider) return 'blockfrost';
+  return 'koios';
 }
 
 /** The faucet, which only a local devnet has. */
@@ -150,6 +170,22 @@ export interface ChainTip {
  * provider to answer "is it up yet".
  */
 export async function fetchTip(provider: Provider): Promise<ChainTip> {
+  // The providers genuinely disagree here, so the difference is handled once, in
+  // the file that owns this boundary. Koios is not Blockfrost-shaped: it answers
+  // `tip` with an array, and has no `blocks/latest` at all.
+  if (provider instanceof KoiosProvider) {
+    const rows = (await provider.get('tip')) as Array<Record<string, unknown>>;
+    const row = rows[0] ?? {};
+    return {
+      height: numberOrNull(row.block_no),
+      slot: numberOrNull(row.abs_slot),
+      epoch: numberOrNull(row.epoch_no),
+      hash: String(row.hash ?? ''),
+      time: numberOrNull(row.block_time) ?? 0,
+      txCount: null, // Koios's tip does not carry it; fetch the block for that.
+    };
+  }
+
   const block = (await provider.get('blocks/latest')) as Record<string, unknown>;
   return {
     height: numberOrNull(block.height),

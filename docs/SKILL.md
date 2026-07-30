@@ -69,8 +69,9 @@ Never pass a boolean flag a value. `--json` and `--help` take none; `ada localne
 - **One wallet, two addresses.** A payment address and a stake address, from the same account on
   different roles. They are not interchangeable.
 - **Networks**: `devnet` is the local chain and the default — one block per second, funded test
-  addresses, disposable. `preprod` and `preview` are public testnets and need an endpoint configured
-  first. `mainnet` is real money.
+  addresses, disposable. `preprod` and `preview` are public testnets and **work with no setup and no
+  API key**; pass `--network preprod` to any read command. `mainnet` is real money, and wallet
+  operations on it are refused.
 
 ## Intent routing
 
@@ -160,7 +161,7 @@ Match on `code`, and prefer `hint` when it is present.
 | `orphaned_services` | Controller gone, services alive | Same — `down` then `up`. `portsHeld` lists the ports |
 | `stop_incomplete` | Stop did not free every port | `portsHeld` lists them. Report to the user; something outside the tool holds them |
 | `component_download_failed` | A devkit component did not download | Retry `ada localnet bootstrap --json`. Check disk space |
-| `config_error` | A network has no endpoint configured | The `hint` contains the exact `ada config set` command |
+| `config_error` | Configuration or capability mismatch — e.g. asking a public network for a faucet | Read the `hint`; it names the actual problem |
 | `invalid_args` | Wrong arguments | Re-read `ada help <command> --json` |
 | `tool_missing` | `yaci-devkit` is not installed | The `hint` has the install command |
 | `network_error` | An HTTP call failed | Retry once. If it persists, report it |

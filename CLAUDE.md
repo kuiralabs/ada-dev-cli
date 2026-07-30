@@ -8,13 +8,13 @@ its second audience.
 
 ## The core constraint
 
-This tool exists to debug and validate *other* implementations, including the Kuira Cardano SDK.
-That only works if it is an **independent implementation**. It is built on MeshJS, and it must
-never be reimplemented on top of the SDK it is used to check — an oracle built from the code under
-test can only confirm that code's own bugs.
+Part of this tool's value is checking whether *another* implementation is behaving — comparing what
+it produces against what a chain accepts. That only works while this tool stays an **independent
+implementation**. It is built on MeshJS, and it must never be rebuilt on top of something it is used
+to check: a reference built from the code under test can only confirm that code's own bugs.
 
-If a change would make this tool share an implementation with something it validates, that change
-is wrong regardless of how much duplication it removes.
+If a change would make this tool share an implementation with something it validates, that change is
+wrong regardless of how much duplication it removes.
 
 ## Compose, don't rewrite
 

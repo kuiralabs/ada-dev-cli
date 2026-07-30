@@ -18,16 +18,25 @@ describe('resolveNetwork', () => {
     expect(net.adminUrl).toBeDefined();
   });
 
-  it('refuses a public network with no endpoint rather than guessing one', () => {
-    // Silently defaulting here would build transactions against the wrong chain,
-    // which is strictly worse than failing.
-    expect(() => resolveNetwork(base({ network: 'preprod' }))).toThrowError(AdaError);
-    try {
-      resolveNetwork(base({ network: 'preprod' }));
-    } catch (err) {
-      expect((err as AdaError).code).toBe('config_error');
-      expect((err as AdaError).hint).toContain('ada config set');
+  it('gives a public network a working default, so nothing needs configuring', () => {
+    // Earlier this threw, demanding an endpoint. Requiring a signup before someone
+    // can read a testnet balance is bad enough that a free community API became the
+    // default instead.
+    for (const name of ['preprod', 'preview'] as const) {
+      const net = resolveNetwork(base({ network: name }));
+      expect(net.name).toBe(name);
+      expect(net.isLocal).toBe(false);
+      // A sentinel, not a URL: the provider is built from a network name, and
+      // inventing a URL here would be a lie that only surfaced later.
+      expect(net.apiUrl).toBe(`koios:${name}`);
     }
+  });
+
+  it('lets an explicit endpoint override the default', () => {
+    const net = resolveNetwork(
+      base({ network: 'preprod', endpoints: { preprod: { apiUrl: 'https://my-host/api/v1' } } }),
+    );
+    expect(net.apiUrl).toBe('https://my-host/api/v1');
   });
 
   it('lets a flag override the configured network for one run', () => {

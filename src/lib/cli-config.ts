@@ -9,7 +9,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { CONFIG_DIR_NAME, CONFIG_FILE_NAME, DEVNET_DEFAULTS } from './constants.ts';
-import { configError, usageError } from './errors.ts';
+import { usageError } from './errors.ts';
 
 export type NetworkName = 'devnet' | 'preprod' | 'preview' | 'mainnet';
 
@@ -18,8 +18,8 @@ export const NETWORK_NAMES: readonly NetworkName[] = ['devnet', 'preprod', 'prev
 export interface AdaConfig {
   network: NetworkName;
   activeWallet?: string;
-  /** Per-network endpoint overrides. Absent means "use the built-in default",
-   *  which only exists for devnet — public networks require an explicit URL. */
+  /** Per-network endpoint overrides. Absent means "use the built-in default":
+   *  the local devnet for `devnet`, and a free community API for public networks. */
   endpoints: Partial<Record<NetworkName, { apiUrl?: string; adminUrl?: string }>>;
 }
 
@@ -115,12 +115,13 @@ export interface ResolvedNetwork {
 }
 
 /**
- * Resolve the network for this run: an explicit flag wins over config, config
- * wins over the built-in default.
+ * Resolve the network for this run: an explicit flag wins over config, config wins
+ * over the built-in default.
  *
- * Only devnet has a usable built-in endpoint. Public networks fail loudly with
- * the exact command to fix it rather than silently pointing somewhere wrong —
- * a transaction built against the wrong network is worse than an error.
+ * Every network has a working default, so nothing needs configuring before first
+ * use. Public networks resolve to a `koios:<name>` sentinel rather than a URL —
+ * that provider is constructed from a network name, not a base URL, and inventing
+ * a URL here would be a lie that only surfaces later. See lib/mesh.ts.
  */
 export function resolveNetwork(config: AdaConfig, override?: string): ResolvedNetwork {
   const name = override ? assertNetworkName(override) : config.network;
@@ -135,16 +136,11 @@ export function resolveNetwork(config: AdaConfig, override?: string): ResolvedNe
     };
   }
 
-  if (!configured.apiUrl) {
-    throw configError(
-      `no API endpoint configured for ${name}`,
-      `set one with: ada config set endpoints.${name}.apiUrl <url>`,
-    );
-  }
-
+  // Public networks need no configuration: a free community API is the default, so
+  // reading a testnet balance takes no signup. An explicit apiUrl overrides it.
   return {
     name,
-    apiUrl: stripTrailingSlash(configured.apiUrl),
+    apiUrl: configured.apiUrl ? stripTrailingSlash(configured.apiUrl) : `koios:${name}`,
     adminUrl: configured.adminUrl ? stripTrailingSlash(configured.adminUrl) : undefined,
     isLocal: false,
   };

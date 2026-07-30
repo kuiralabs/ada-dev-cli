@@ -64,7 +64,7 @@ counterpart, reason given) · **open** (needs a decision)
 
 **`dust register` and `dust status` do not exist on Cardano.** Midnight uses a separate token to
 pay fees, which has to be registered for and monitored, and a large share of `mn`'s complexity —
-and of the Kuira SDK's error taxonomy — exists to manage it. Cardano pays fees in ADA out of the
+and of any Midnight client's error handling — exists to manage it. Cardano pays fees in ADA out of the
 same UTxOs being spent. The whole category disappears.
 
 Worth stating explicitly rather than leaving as a gap: someone comparing the two tools will

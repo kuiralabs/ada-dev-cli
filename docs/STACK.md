@@ -87,14 +87,29 @@ a local devnet also reads the real network, with only a URL change.
 Two things caught us here, and both are in `docs/DEVNET.md`: Yaci Store is a **separate download**,
 and it is **off by default**. A devnet without it looks perfectly healthy and answers no questions.
 
-### Blockfrost — the shape everyone copied
+### Koios — public networks, with no account
+
+**Made by:** the Koios community — a federated set of independently operated Cardano API instances.
+
+**What it is:** a free, community-run query API. It is the default for `preprod`, `preview` and
+mainnet reads, which is why **those networks work with no signup and no API key.** Requiring an
+account before someone can read a testnet balance is friction with no upside, and it is avoidable.
+
+Two things to know if you use the library directly: its provider must be constructed from a network
+*name*, not a base URL (the URL form sends an empty auth header and gets a 403), and it is **not**
+Blockfrost-shaped — it answers `tip` with an array and has no `blocks/latest`.
+
+### Blockfrost — the shape everyone copied, and the opt-in
 
 **What it is:** a company that runs hosted Cardano APIs.
 
-**Why it appears here even though we do not use it yet:** its API shape became the de-facto
-standard, so "Blockfrost-compatible" is a meaningful claim and several projects make it. It is the
-likely way this tool will reach preprod and mainnet later — hence the note that `http.ts` cannot
-yet send an API key.
+**Why it matters even as a fallback:** its API shape became the de-facto standard, so
+"Blockfrost-compatible" is a meaningful claim and several projects — including the devnet's own
+indexer — implement it.
+
+Set `ADA_BLOCKFROST_KEY` to use it instead of Koios, for higher rate limits or because you already
+have a key. In the environment, never as an argument: command lines land in shell history and
+process listings.
 
 ### MeshJS — the wallet and transaction brain (stage 2)
 
@@ -109,9 +124,10 @@ two-party swap.
 Its **headless wallet** works on a server with no browser extension — which is what makes a CLI
 wallet possible at all. Most Cardano wallet libraries assume a browser.
 
-And it is an **independent implementation** from the Kuira Cardano SDK we are also building. That
-matters more than it sounds: this tool's job includes telling us when *our own SDK* is wrong. An
-oracle built from the code under test can only ever confirm that code's own bugs.
+And it keeps this tool an **independent implementation**. Part of what a CLI like this is for is
+checking another implementation's output against what a chain actually accepts — and that only works
+while the two do not share a core. A reference built from the code under test can only confirm that
+code's own bugs.
 
 ### cardano-address — the referee
 

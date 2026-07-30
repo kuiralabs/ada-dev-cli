@@ -77,8 +77,11 @@ any Cardano code, whether or not you use this tool.
 | `ada help [command]` | Usage for all or one command |
 | `ada manual` | Full reference — every command, every flag |
 
-Working today: `localnet`, `tip`, `info`, `config`, `help`. Run `ada help` for the current list —
-it marks which commands are implemented.
+Run `ada help --json` for the current list — it marks which commands are implemented.
+
+**Public testnets need no setup.** `--network preprod` or `--network preview` works on any read
+command with no account and no API key, via the free community API. Set `ADA_BLOCKFROST_KEY` if you
+prefer Blockfrost or want higher rate limits.
 
 Installing provides two binaries: `ada` and `ada-mcp`.
 
