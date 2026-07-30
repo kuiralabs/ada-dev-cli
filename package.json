@@ -1,7 +1,7 @@
 {
   "name": "ada-wallet-cli",
   "version": "0.0.1",
-  "description": "Cardano CLI wallet — wallets, balances, transfers, native assets, atomic swaps and a local devnet from one command surface.",
+  "description": "Cardano CLI wallet \u2014 wallets, balances, transfers, native assets, atomic swaps and a local devnet from one command surface.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "nel349",
@@ -23,6 +23,7 @@
   ],
   "bin": {
     "ada": "dist/ada.js",
+    "ada-mcp": "dist/mcp-server.js",
     "ada-wallet-cli": "dist/ada.js"
   },
   "files": [
@@ -34,11 +35,12 @@
   },
   "scripts": {
     "ada": "tsx src/ada.ts",
-    "build": "bun build src/ada.ts --outfile dist/ada.js --target node --format esm --packages external --banner \"#!/usr/bin/env node\"",
+    "build": "bun build src/ada.ts --outfile dist/ada.js --target node --format esm --packages external --banner \"#!/usr/bin/env node\" && bun build src/mcp-server.ts --outfile dist/mcp-server.js --target node --format esm --packages external --banner \"#!/usr/bin/env node\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build",
+    "mcp": "tsx src/mcp-server.ts"
   },
   "devDependencies": {
     "@bloxbean/yaci-devkit": "^0.10.6",
@@ -48,6 +50,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@meshsdk/core": "^1.9.1"
+    "@meshsdk/core": "^1.9.1",
+    "@modelcontextprotocol/sdk": "^1.30.0"
   }
 }

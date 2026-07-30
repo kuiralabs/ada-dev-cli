@@ -80,8 +80,7 @@ any Cardano code, whether or not you use this tool.
 Working today: `localnet`, `tip`, `info`, `config`, `help`. Run `ada help` for the current list —
 it marks which commands are implemented.
 
-Installing currently provides `ada`. The `ada-mcp` server binary arrives with the agent surface
-(stage 3 in `tasks/IMPLEMENTATION.md`).
+Installing provides two binaries: `ada` and `ada-mcp`.
 
 ## How it works
 

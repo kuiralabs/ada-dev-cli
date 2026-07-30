@@ -58,9 +58,16 @@ its twenty addresses to a log; `cluster-info.json` has ports but not addresses),
 - [x] Capability discovery: `ada help --json` reports `implemented` per command
 - [x] Capture-target hook in the output layer, so the MCP server can collect output without
       writing to stdout and corrupting its own transport
-- [ ] `ada-mcp` itself
-- [ ] Two-step confirmation for anything that moves money — mirror `mn`'s pending-token flow so an
-      agent must obtain consent before a transfer executes
+- [x] `ada-mcp` — 18 tools over stdio, commands run in-process through the capture hook so nothing
+      writes to the transport the client is reading. The skill is offered as a readable resource
+- [x] Two-step confirmation, **enforced rather than advised**: `ada_transfer`,
+      `ada_wallet_remove` and `ada_localnet_reset` return a single-use token that expires in five
+      minutes. A `--yes` flag would not work here — an agent would just pass it — but a token it
+      cannot mint forces the conversation
+- [x] Honest annotations: `readOnlyHint` only where there is genuinely no state change, and tests
+      assert no consent tool is ever marked read-only
+- [x] Verified over the wire with a real MCP client: airdrop, preview, pending token, wrong token
+      rejected, confirm, replay rejected, balances reconciled to the lovelace
 - [ ] Verify no path an agent needs can block on a prompt
 
 **Done when:** a debugging loop runs as a conversation, with no commands copied by hand.

@@ -1,0 +1,326 @@
+// MCP tool definitions.
+//
+// Two rules shape this list.
+//
+// **Only wallet and chain primitives are exposed.** Yaci DevKit ships its own MCP
+// server for devnet operations, so duplicating the chain lifecycle would mean two
+// things to keep correct. Ours owns the wallet; theirs owns the chain. The
+// `localnet` tools here are the minimum needed to answer "is there a chain" and get
+// one — not a second control surface.
+//
+// **Annotations are honest.** `readOnlyHint` means genuinely no state change, so a
+// client may call it without asking. Getting that wrong is how an agent silently
+// spends money, so `transfer` carries `destructiveHint` and does not execute on
+// first call at all — see the confirmation store.
+
+export interface ToolAnnotations {
+  /** No state change. Safe to call without asking the user. */
+  readOnlyHint?: boolean;
+  /** Moves funds, deletes keys, or tears down infrastructure. */
+  destructiveHint?: boolean;
+  /** Repeated calls with the same arguments give the same result. */
+  idempotentHint?: boolean;
+  /** Touches the network, the chain, or an external process. */
+  openWorldHint?: boolean;
+}
+
+export interface ToolDef {
+  name: string;
+  description: string;
+  annotations?: ToolAnnotations;
+  inputSchema: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+  /** CLI command this maps to, and how arguments become argv. */
+  command: string;
+  toArgv: (input: Record<string, unknown>) => string[];
+  /** Present on tools that require consent before executing. */
+  describeForConsent?: (input: Record<string, unknown>) => string;
+  /**
+   * Rewrite the command's document for an agent audience.
+   *
+   * The CLI's hints are written for someone at a terminal and name flags. Over MCP
+   * a flag is meaningless — an agent told to "pass --yes" has no way to act on it —
+   * so a tool may replace guidance with the tool call that actually applies.
+   */
+  transformResult?: (document: Record<string, unknown>) => Record<string, unknown>;
+}
+
+const NETWORK = {
+  type: 'string',
+  enum: ['devnet', 'preprod', 'preview'],
+  description: 'Override the configured network for this call. Omit to use the active one.',
+};
+
+const str = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? v : undefined);
+
+/** Append `--network` when supplied, so every tool handles it identically. */
+const withNetwork = (input: Record<string, unknown>, argv: string[]): string[] => {
+  const n = str(input.network);
+  return n ? [...argv, '--network', n] : argv;
+};
+
+export const TOOLS: ToolDef[] = [
+  // ── Reading ────────────────────────────────────────────────
+  {
+    name: 'ada_status',
+    description:
+      'One-shot health check: is the chain reachable, is the devnet running, which wallet is active. '
+      + 'Call this first when something is wrong — it never fails for an unreachable chain, it reports it.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: { type: 'object', properties: { network: NETWORK } },
+    command: 'status',
+    toArgv: (i) => withNetwork(i, []),
+  },
+  {
+    name: 'ada_tip',
+    description: 'Current chain tip: height, slot, epoch, block hash.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: { type: 'object', properties: { network: NETWORK } },
+    command: 'tip',
+    toArgv: (i) => withNetwork(i, []),
+  },
+  {
+    name: 'ada_params',
+    description:
+      'Protocol parameters: fee coefficients, the per-byte cost that sets an output minimum, and size limits. '
+      + 'Use this to explain why a fee is what it is, or why an output was rejected as too small.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: { type: 'object', properties: { network: NETWORK } },
+    command: 'params',
+    toArgv: (i) => withNetwork(i, []),
+  },
+  {
+    name: 'ada_wallet_list',
+    description: 'List wallets, marking which is active.',
+    annotations: { readOnlyHint: true },
+    inputSchema: { type: 'object', properties: { network: NETWORK } },
+    command: 'wallet',
+    toArgv: (i) => withNetwork(i, ['list']),
+  },
+  {
+    name: 'ada_wallet_info',
+    description:
+      'A wallet\'s payment address, stake address and derivation path. '
+      + 'The two addresses are not interchangeable: payment receives funds, stake identifies for rewards.',
+    annotations: { readOnlyHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Wallet name. Omit for the active wallet.' },
+        network: NETWORK,
+      },
+    },
+    command: 'wallet',
+    toArgv: (i) => withNetwork(i, str(i.name) ? ['info', str(i.name)!] : ['info']),
+  },
+  {
+    name: 'ada_balance',
+    description:
+      'ADA and every native asset held, plus the UTxO count. Accepts a wallet name or a raw address.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Wallet name or addr… address. Omit for the active wallet.' },
+        network: NETWORK,
+      },
+    },
+    command: 'balance',
+    toArgv: (i) => withNetwork(i, str(i.target) ? [str(i.target)!] : []),
+  },
+  {
+    name: 'ada_utxos',
+    description:
+      'The unspent outputs behind a balance. On Cardano a balance is a sum over a set, '
+      + 'so when a number looks wrong this is what explains it.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Wallet name or address. Omit for the active wallet.' },
+        network: NETWORK,
+      },
+    },
+    command: 'utxos',
+    toArgv: (i) => withNetwork(i, str(i.target) ? [str(i.target)!] : []),
+  },
+  {
+    name: 'ada_address_inspect',
+    description: 'Decode an address: base, enterprise or stake, its network, and its credentials.',
+    annotations: { readOnlyHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: { address: { type: 'string' } },
+      required: ['address'],
+    },
+    command: 'address',
+    toArgv: (i) => ['inspect', String(i.address)],
+  },
+  {
+    name: 'ada_transfer_preview',
+    description:
+      'Build a transfer WITHOUT sending it, and report the exact fee, change and outputs. '
+      + 'Always call this before ada_transfer: the fee is real, not an estimate, and it is the only '
+      + 'chance to show the user what a send will cost.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', description: 'Recipient bech32 address.' },
+        ada: { type: 'string', description: 'Amount in ADA, as a decimal string. Example: "10.5".' },
+        wallet: { type: 'string', description: 'Sending wallet. Omit for the active one.' },
+        network: NETWORK,
+      },
+      required: ['to', 'ada'],
+    },
+    command: 'transfer',
+    toArgv: (i) => {
+      const argv = [String(i.to), String(i.ada)];
+      const w = str(i.wallet);
+      return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
+    },
+    transformResult: (doc) => ({
+      ...doc,
+      hint: doc.ok === true
+        ? 'nothing was sent. To send it: show the fee and recipient to the user, get consent, then call ada_transfer followed by ada_confirm'
+        : doc.hint,
+    }),
+  },
+
+  // ── Changing state ────────────────────────────────────────
+  {
+    name: 'ada_wallet_generate',
+    description:
+      'Create a wallet and make it active. Keys are stored UNENCRYPTED on disk and mainnet is refused — '
+      + 'these are development keys. Tell the user that before creating one.',
+    annotations: { destructiveHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Letters, digits, dashes or underscores.' },
+        network: NETWORK,
+      },
+      required: ['name'],
+    },
+    command: 'wallet',
+    toArgv: (i) => withNetwork(i, ['generate', String(i.name)]),
+  },
+  {
+    name: 'ada_wallet_use',
+    description: 'Set the active wallet, which changes what later calls act on.',
+    annotations: { idempotentHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string' } },
+      required: ['name'],
+    },
+    command: 'wallet',
+    toArgv: (i) => ['use', String(i.name)],
+  },
+  {
+    name: 'ada_airdrop',
+    description:
+      'Fund an address from the local devnet faucet. Devnet only — a public network has no faucet. '
+      + 'Safe: the money is worthless. Needs one block to confirm before it shows in a balance.',
+    annotations: { destructiveHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ada: { type: 'string', description: 'Amount in ADA. Example: "1000".' },
+        address: { type: 'string', description: 'Raw address to fund. Omit for the active wallet.' },
+      },
+      required: ['ada'],
+    },
+    command: 'airdrop',
+    toArgv: (i) => {
+      const a = str(i.address);
+      return a ? [String(i.ada), '--address', a] : [String(i.ada)];
+    },
+  },
+  {
+    name: 'ada_localnet_up',
+    description:
+      'Start the local devnet. First run downloads about 1.4 GB and takes minutes; after that about '
+      + 'nine seconds. Warn the user before a first run. Safe to call when already running.',
+    annotations: { idempotentHint: true, openWorldHint: true },
+    inputSchema: { type: 'object', properties: {} },
+    command: 'localnet',
+    toArgv: () => ['up'],
+  },
+  {
+    name: 'ada_localnet_down',
+    description: 'Stop the local devnet and every service it started. Chain state is lost.',
+    annotations: { destructiveHint: true },
+    inputSchema: { type: 'object', properties: {} },
+    command: 'localnet',
+    toArgv: () => ['down'],
+  },
+
+  // ── Requires consent ──────────────────────────────────────
+  {
+    name: 'ada_transfer',
+    description:
+      'Send ADA. Does NOT execute on this call: it returns a pending token and a description. '
+      + 'Show the description to the user verbatim, get explicit consent, then call ada_confirm with the token. '
+      + 'Call ada_transfer_preview first so the fee is known before you ask.',
+    annotations: { destructiveHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', description: 'Recipient bech32 address.' },
+        ada: { type: 'string', description: 'Amount in ADA, as a decimal string.' },
+        wallet: { type: 'string', description: 'Sending wallet. Omit for the active one.' },
+        network: NETWORK,
+      },
+      required: ['to', 'ada'],
+    },
+    command: 'transfer',
+    toArgv: (i) => {
+      const argv = [String(i.to), String(i.ada), '--yes'];
+      const w = str(i.wallet);
+      return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
+    },
+    describeForConsent: (i) =>
+      `Send ${String(i.ada)} ADA to ${String(i.to)}`
+      + (str(i.wallet) ? ` from wallet ${str(i.wallet)}` : ' from the active wallet')
+      + (str(i.network) ? ` on ${str(i.network)}` : ''),
+  },
+  {
+    name: 'ada_wallet_remove',
+    description:
+      'Delete a wallet and its recovery phrase permanently. Returns a pending token; '
+      + 'get consent, then call ada_confirm.',
+    annotations: { destructiveHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string' } },
+      required: ['name'],
+    },
+    command: 'wallet',
+    toArgv: (i) => ['remove', String(i.name), '--yes'],
+    describeForConsent: (i) =>
+      `Permanently delete wallet ${String(i.name)} and its recovery phrase. This cannot be undone.`,
+  },
+  {
+    name: 'ada_localnet_reset',
+    description:
+      'Wipe the devnet chain back to genesis. Wallet keys survive; every balance does not. '
+      + 'Returns a pending token; get consent, then call ada_confirm.',
+    annotations: { destructiveHint: true },
+    inputSchema: { type: 'object', properties: {} },
+    command: 'localnet',
+    toArgv: () => ['reset', '--yes'],
+    describeForConsent: () =>
+      'Reset the local devnet to genesis. Wallet keys are kept, but every balance and transaction is lost.',
+  },
+];
+
+/** Tools that must not execute before the user has agreed. */
+export const CONSENT_TOOLS = new Set(
+  TOOLS.filter((t) => t.describeForConsent !== undefined).map((t) => t.name),
+);
+
+export const byName = (name: string): ToolDef | undefined => TOOLS.find((t) => t.name === name);

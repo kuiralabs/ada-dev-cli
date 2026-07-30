@@ -1,7 +1,14 @@
 # ada-wallet-cli — Agent Skill
 
-You have access to the `ada` CLI for Cardano. This document teaches you how to drive it. Read it
-once at the start of a session; use it as reference throughout.
+You have access to Cardano through this tool, either as the `ada` CLI or as the `ada-mcp` MCP
+server. Read this once at the start of a session; use it as reference throughout.
+
+**Over MCP**, prefer the tools: `ada_status`, `ada_balance`, `ada_transfer_preview`,
+`ada_transfer` + `ada_confirm`, and so on. Tool descriptions carry the same rules as this document
+and the annotations tell you what is safe to call unasked. The two-step send flow below is
+**enforced** there — `ada_transfer` cannot send on its own, whatever arguments you pass.
+
+**Over the CLI**, every command takes `--json`. The rules are identical.
 
 **Scope note:** wallets, balances, funding and ADA transfers work, as do the devnet lifecycle and
 chain inspection. Native assets and atomic swaps are designed but not built. **Never invent a command.** Ask the tool what it has:
@@ -103,7 +110,18 @@ unreachable chain — an unreachable chain is the answer, not an error.
 
 ## Sending ADA — the two-step flow
 
-`ada transfer` **does not send anything without `--yes`.** Use that.
+**Over MCP this is enforced, not advisory.** `ada_transfer` never sends. It returns
+`{pending: true, token, description, expiresAt}`. Show the `description` to the user **verbatim**,
+get explicit consent, then call `ada_confirm({token})`. The token is **single-use** and expires in
+five minutes; a replay fails with `token_not_valid`. You cannot mint one, so you cannot skip the
+conversation.
+
+`ada_wallet_remove` and `ada_localnet_reset` work the same way.
+
+Call `ada_transfer_preview` first: it builds the transaction against live protocol parameters and
+reports the **real** fee, so you are showing the user a number rather than an estimate.
+
+**Over the CLI**, `ada transfer` does not send anything without `--yes`.
 
 1. Run `ada transfer <address> <ada> --json`. The transaction is fully built against live
    protocol parameters and you get back `submitted: false` plus the real `feeAda`, `changeAda`,

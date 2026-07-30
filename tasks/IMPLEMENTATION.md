@@ -18,7 +18,7 @@ counterpart, reason given) · **open** (needs a decision)
 
 | | Count |
 |---|---|
-| Done | 14 commands, 95 offline tests, agent output contract, **the fund-read-transfer loop proven on a real chain** |
+| Done | 13 commands + **18 MCP tools**, 114 offline tests, **the loop proven on a real chain over both surfaces** |
 | Next | **MCP server**, then assets and swap. `localnet addresses` and preprod verification are blocked, not deferred |
 | Planned | MCP server, assets, swap, publish |
 | No counterpart | 2 (`dust register`, `dust status`) |
@@ -111,18 +111,18 @@ These are additions, not parity gaps. They exist because the ledger is different
 
 | `mn` tool | `ada` tool | Status |
 |---|---|---|
-| `midnight_wallet_generate` | `ada_wallet_generate` | planned · stage 3 |
-| `midnight_wallet_list` | `ada_wallet_list` | planned · stage 3 |
-| `midnight_wallet_use` | `ada_wallet_use` | planned · stage 3 |
-| `midnight_wallet_info` | `ada_wallet_info` | planned · stage 3 |
+| `midnight_wallet_generate` | `ada_wallet_generate` | **done** |
+| `midnight_wallet_list` | `ada_wallet_list` | **done** |
+| `midnight_wallet_use` | `ada_wallet_use` | **done** |
+| `midnight_wallet_info` | `ada_wallet_info` | **done** |
 | `midnight_wallet_remove` | `ada_wallet_remove` | planned · stage 3 |
-| `midnight_info` | `ada_info` | planned · stage 3 |
-| `midnight_balance` | `ada_balance` | planned · stage 3 |
+| `midnight_info` | `ada_info` | **done** |
+| `midnight_balance` | `ada_balance` | **done** |
 | `midnight_address` | `ada_address_derive` | planned · stage 3 |
 | `midnight_genesis_address` | `ada_localnet_addresses` | planned · stage 3 |
 | `midnight_inspect_cost` | `ada_params` | planned · stage 3 |
-| `midnight_airdrop` | `ada_airdrop` | planned · stage 3 |
-| `midnight_transfer` | `ada_transfer` | planned · stage 3 |
+| `midnight_airdrop` | `ada_airdrop` | **done** |
+| `midnight_transfer` | `ada_transfer` | **done** |
 | `midnight_config_get/set/unset` | `ada_config_get/set/unset` | planned · stage 3 |
 | `midnight_cache_clear` | `ada_cache_clear` | planned · stage 3 |
 | `midnight_localnet_up/stop/down/status/clean` | `ada_localnet_up/stop/down/status/reset` | planned · stage 3 |
@@ -155,9 +155,9 @@ loop the SDK work gets debugged inside.**
 
 Still open in this area: `params` and `localnet addresses`, neither of which blocks anything.
 
-**3 · Agent surface — partly landed early.** The `--json` envelope, the stable `code` taxonomy and
-`docs/SKILL.md` are done, because the contract could not be retrofitted once commands multiplied.
-Remaining: `ada-mcp` itself, and the two-step confirmation flow for anything that moves money.
+**3 · Agent surface — done.** The `--json` envelope, the stable `code` taxonomy, `docs/SKILL.md`,
+`ada-mcp` with 18 annotated tools, and enforced two-step confirmation for anything that moves money
+or deletes a key. Driven end to end with a real MCP client.
 
 **4 · Hardening.** What is left after the cheap items were taken early: `manual`, `cache clear`,
 `localnet snapshot/rollback`, `test`, and verifying preprod.
