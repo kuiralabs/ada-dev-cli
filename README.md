@@ -1,7 +1,10 @@
-# ada-wallet-cli
+# ada-dev-cli
 
-A standalone CLI wallet for Cardano. Manage wallets, check balances, transfer ADA and native
-assets, run a local devnet, and settle two-party atomic swaps — all from the terminal.
+A Cardano development CLI. Run a local devnet, fund a wallet, check balances, transfer ADA and
+native assets, and settle two-party atomic swaps — all from the terminal.
+
+It is a developer instrument, not a consumer wallet: it works on devnet, preview and preprod, and
+**refuses mainnet outright**.
 
 Built for two audiences: **developers** starting a Cardano project who want a funded wallet on a
 local chain in under five minutes, and **AI agents** (Claude Code, Cursor, any MCP client) using
@@ -17,14 +20,14 @@ the same primitives through a built-in MCP server.
 Not on npm yet, so link it from a clone:
 
 ```sh
-git clone https://github.com/kuiralabs/ada-wallet-cli
-cd ada-wallet-cli
+git clone https://github.com/kuiralabs/ada-dev-cli
+cd ada-dev-cli
 npm install
 npm run build     # the global binary runs the bundle, not the sources
 npm link          # puts `ada` on your PATH
 ```
 
-Then `ada status` should answer. To remove it: `npm unlink -g ada-wallet-cli`.
+Then `ada status` should answer. To remove it: `npm unlink -g ada-dev-cli`.
 
 **Working on the code?** `npx tsx src/ada.ts <command>` runs the sources directly, so you skip the
 rebuild. The linked `ada` keeps running the last `npm run build` until you run it again — worth

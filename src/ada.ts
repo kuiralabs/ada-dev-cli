@@ -1,4 +1,4 @@
-// ada-wallet-cli entry point.
+// ada-dev-cli entry point.
 // Usage: ada <command> [args] [--flags]
 //
 // Commands are loaded by dynamic import so a single fast command does not pay

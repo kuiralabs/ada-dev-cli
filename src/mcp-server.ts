@@ -1,4 +1,4 @@
-// ada-wallet-cli — MCP server.
+// ada-dev-cli — MCP server.
 //
 // Exposes the wallet and chain commands as MCP tools over stdio.
 // Launch: ada-mcp  (or: node dist/mcp-server.js)
@@ -69,7 +69,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(ListResourcesRequestSchema, async () => ({
   resources: [{
     uri: SKILL_URI,
-    name: 'ada-wallet-cli agent skill',
+    name: 'ada-dev-cli agent skill',
     description: 'How to drive this tool: intent routing, the two-step send flow, error recovery, safety rules.',
     mimeType: 'text/markdown',
   }],

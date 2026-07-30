@@ -1,6 +1,7 @@
-# ada-wallet-cli
+# ada-dev-cli
 
-A standalone CLI wallet for Cardano, with a built-in MCP server so agents are first-class users.
+A Cardano development CLI, with a built-in MCP server so agents are first-class users. It is a
+developer instrument, not a consumer wallet — testnets only, mainnet refused.
 
 **Read `docs/COMMANDS.md` before adding or changing a command.** It holds the output contract, and
 the contract is the product — a command that prints a spinner into stdout has broken the tool for

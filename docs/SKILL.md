@@ -1,4 +1,4 @@
-# ada-wallet-cli — Agent Skill
+# ada-dev-cli — Agent Skill
 
 You have access to Cardano through this tool, either as the `ada` CLI or as the `ada-mcp` MCP
 server. Read this once at the start of a session; use it as reference throughout.

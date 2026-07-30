@@ -1,17 +1,17 @@
 {
-  "name": "ada-wallet-cli",
+  "name": "ada-dev-cli",
   "version": "0.0.1",
-  "description": "Cardano CLI wallet \u2014 wallets, balances, transfers, native assets, atomic swaps and a local devnet from one command surface.",
+  "description": "Cardano development CLI — local devnet, wallets, balances, transfers, native assets and atomic swaps from one command surface. Testnets only.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "nel349",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kuiralabs/ada-wallet-cli.git"
+    "url": "git+https://github.com/kuiralabs/ada-dev-cli.git"
   },
-  "homepage": "https://github.com/kuiralabs/ada-wallet-cli#readme",
+  "homepage": "https://github.com/kuiralabs/ada-dev-cli#readme",
   "bugs": {
-    "url": "https://github.com/kuiralabs/ada-wallet-cli/issues"
+    "url": "https://github.com/kuiralabs/ada-dev-cli/issues"
   },
   "keywords": [
     "cardano",
@@ -23,8 +23,7 @@
   ],
   "bin": {
     "ada": "dist/ada.js",
-    "ada-mcp": "dist/mcp-server.js",
-    "ada-wallet-cli": "dist/ada.js"
+    "ada-mcp": "dist/mcp-server.js"
   },
   "files": [
     "dist",

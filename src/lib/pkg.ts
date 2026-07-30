@@ -23,4 +23,4 @@ function readVersion(): string {
 }
 
 export const PKG_VERSION = readVersion();
-export const PKG_NAME = 'ada-wallet-cli';
+export const PKG_NAME = 'ada-dev-cli';

@@ -110,7 +110,7 @@ async function mint(args: Args): Promise<void> {
     // explorers look for. Inventing a shape here would mint an asset nothing can
     // display.
     .metadataValue(CIP25_METADATA_LABEL, {
-      [policyId]: { [name]: { name, description: flagValue(args, 'description') ?? `Minted with ada-wallet-cli` } },
+      [policyId]: { [name]: { name, description: flagValue(args, 'description') ?? `Minted with ada-dev-cli` } },
     })
     .changeAddress(ctx.payment)
     .selectUtxosFrom(utxos)
