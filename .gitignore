@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+*.wallet.json
+wallet.json
+.DS_Store
+*.tgz
+private/
+.mcp.json
+.claude/settings.local.json
+~/.ada/
+*.ldb
