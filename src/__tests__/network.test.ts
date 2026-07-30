@@ -25,7 +25,7 @@ describe('resolveNetwork', () => {
     try {
       resolveNetwork(base({ network: 'preprod' }));
     } catch (err) {
-      expect((err as AdaError).reason).toBe('config_error');
+      expect((err as AdaError).code).toBe('config_error');
       expect((err as AdaError).hint).toContain('ada config set');
     }
   });

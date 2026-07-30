@@ -7,7 +7,7 @@
 import { parseArgs, hasFlag } from './lib/argv.ts';
 import { toAdaError } from './lib/errors.ts';
 import { EXIT_INVALID_ARGS } from './lib/exit-codes.ts';
-import { writeJsonError } from './lib/json-output.ts';
+import { writeJsonError, setCurrentCommand } from './lib/json-output.ts';
 import { PKG_VERSION } from './lib/pkg.ts';
 import { errorBlock } from './ui/format.ts';
 
@@ -37,6 +37,8 @@ if (hasFlag(args, 'help') || hasFlag(args, 'h')) {
 }
 
 const command = args.command ?? 'help';
+// Stamped once so every document this run emits carries it.
+setCurrentCommand(command);
 const loader = COMMAND_LOADERS[command];
 
 if (!loader) {
@@ -53,7 +55,7 @@ try {
 } catch (err) {
   const adaErr = toAdaError(err);
   if (jsonMode) {
-    writeJsonError(adaErr.reason, adaErr.message, adaErr.hint);
+    writeJsonError(adaErr.code, adaErr.message, adaErr.hint);
   } else {
     process.stderr.write(errorBlock(adaErr.message, adaErr.hint) + '\n');
   }

@@ -36,12 +36,19 @@ ahead of it.
 **Done when:** fund an address, read its balance, send a transfer, all on the local devnet. This is
 the exit bar that unblocks the SDK work.
 
-## 3 · Agent surface
+## 3 · Agent surface — contract landed, server pending
 
-- [ ] `--json` on every command, stdout clean, stderr for stable error reasons
-- [ ] `ada-mcp` exposing the wallet operations
-- [ ] `docs/SKILL.md` — ships with the tool so any agent picks up the command surface. Written
-      against the real binary, not ahead of it
+- [x] One JSON document on **stdout** for success and failure alike, envelope applied centrally so
+      no command can forget it. Failures on stdout so `--json | jq` works either way
+- [x] Stable `code` taxonomy; `message` explicitly prose. Exit codes documented
+- [x] `docs/SKILL.md`, shipped in the package `files` — intent routing, error-recovery table keyed
+      on `code`, safety rules, platform limits
+- [x] Capability discovery: `ada help --json` reports `implemented` per command
+- [x] Capture-target hook in the output layer, so the MCP server can collect output without
+      writing to stdout and corrupting its own transport
+- [ ] `ada-mcp` itself
+- [ ] Two-step confirmation for anything that moves money — mirror `mn`'s pending-token flow so an
+      agent must obtain consent before a transfer executes
 - [ ] Verify no path an agent needs can block on a prompt
 
 **Done when:** a debugging loop runs as a conversation, with no commands copied by hand.

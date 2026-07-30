@@ -8,7 +8,9 @@ import {
 
 export class AdaError extends Error {
   constructor(
-    readonly reason: string,
+    /** Machine-stable identifier. Emitted as `code` in --json mode and safe to
+     *  branch on; the message is prose and may change. */
+    readonly code: string,
     message: string,
     readonly exitCode: number,
     readonly hint?: string,

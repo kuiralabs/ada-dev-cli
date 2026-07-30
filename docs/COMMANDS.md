@@ -9,12 +9,28 @@ an agent is a first-class user rather than an afterthought.
 
 Every command follows this, without exception:
 
-**`--json` produces machine-readable output on stdout and nothing else.** No banners, no progress
-spinners, no colour codes. An agent parses stdout; a human reads the default human format.
+**`--json` produces exactly one JSON document on stdout — for success and for failure alike.** No
+banners, no spinners, no colour. Stderr carries progress and chrome only.
 
-**Errors go to stderr with a stable, documented reason.** `insufficient funds`, `output below
-minimum value`, `asset not found`, `offer expired` — not a stack trace, and not prose that changes
-between versions. The exit code distinguishes user error from tool failure from chain rejection.
+Failures go to **stdout**, not stderr. That is deliberate and it is the opposite of the first
+implementation: `ada <cmd> --json | jq` has to work whether the command succeeded or not, or an agent
+piping stdout gets nothing back on the cases it most needs to understand. It also matches
+`midnight-wallet-cli`, so an agent that knows one tool knows the other.
+
+Every document is self-labelling and the envelope is applied centrally, so no command can forget it:
+
+    success   { "ok": true,  "command": "tip", ... }
+    failure   { "ok": false, "error": true, "command": "tip", "code": "...", "message": "...",
+                "hint": "..." }
+
+**`code` is the contract; `message` is prose.** `insufficient_funds`, `output_below_min_value`,
+`offer_expired` are safe to branch on. The message may be reworded at any time and must never be
+pattern-matched. `hint`, where present, is the suggested next action. The exit code separates user
+error from tool failure from chain rejection.
+
+**The agent-facing contract lives in `docs/SKILL.md`**, which ships with the package. It is the
+document an MCP client or coding agent should read, and it is written against the real command
+surface — `ada help --json` reports `implemented` per command and is the authority.
 
 **No interactive prompts on any path an agent needs.** Anything that would prompt takes a flag
 instead. A confirmation step is allowed only where money moves irreversibly, and `--yes` must

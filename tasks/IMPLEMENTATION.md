@@ -18,7 +18,7 @@ counterpart, reason given) · **open** (needs a decision)
 
 | | Count |
 |---|---|
-| Done | 5 commands, 41 offline tests, devnet lifecycle proven end to end |
+| Done | 5 commands, 53 offline tests, devnet lifecycle proven end to end, agent output contract |
 | Next | wallets, balance, utxos, airdrop, transfer |
 | Planned | MCP server, assets, swap, publish |
 | No counterpart | 2 (`dust register`, `dust status`) |
@@ -152,8 +152,9 @@ parser.
 `fee estimate`, `params`, `localnet addresses`. **Closing this is what unblocks the SDK work**,
 because it is the fund-read-transfer loop everything gets debugged inside.
 
-**3 · Agent surface.** `ada-mcp`, `--json` verified on every command, `docs/SKILL.md` written
-against the real binary.
+**3 · Agent surface — partly landed early.** The `--json` envelope, the stable `code` taxonomy and
+`docs/SKILL.md` are done, because the contract could not be retrofitted once commands multiplied.
+Remaining: `ada-mcp` itself, and the two-step confirmation flow for anything that moves money.
 
 **4 · Hardening.** Preprod alongside devnet, error taxonomy documented, `address derive/inspect`,
 `status`, `manual`, `cache clear`, `localnet reset/snapshot/rollback`, `test`.

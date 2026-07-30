@@ -6,7 +6,7 @@ import type { Args } from '../lib/argv.ts';
 import { flagValue, hasFlag } from '../lib/argv.ts';
 import { loadConfig, resolveNetwork } from '../lib/cli-config.ts';
 import { usageError } from '../lib/errors.ts';
-import { writeJson } from '../lib/json-output.ts';
+import { writeJson, writeJsonError } from '../lib/json-output.ts';
 import { isReachable } from '../lib/http.ts';
 import { ENDPOINTS, DEVNET_READY_TIMEOUT_MS } from '../lib/constants.ts';
 import { EXIT_NOT_RUNNING } from '../lib/exit-codes.ts';
@@ -123,15 +123,12 @@ async function up(args: Args): Promise<void> {
       : `devnet did not answer within ${Math.round(DEVNET_READY_TIMEOUT_MS / 1000)}s`;
 
     if (json) {
-      writeJson({
-        ok: false,
-        reason: result.processDied ? 'devnet_exited' : 'devnet_not_ready',
+      writeJsonError(
+        result.processDied ? 'devnet_exited' : 'devnet_not_ready',
         message,
-        diagnosis: diagnosis ?? null,
-        logPath: devnetLogPath(),
-        logTail: logLines,
-        waitedMs: result.waitedMs,
-      });
+        diagnosis,
+        { logPath: devnetLogPath(), logTail: logLines, waitedMs: result.waitedMs },
+      );
     } else {
       process.stdout.write(warn(message) + '\n');
       if (diagnosis) process.stdout.write(`  ${diagnosis}\n`);
@@ -171,8 +168,8 @@ async function bootstrap(args: Args): Promise<void> {
   else process.stdout.write(ok('devkit components downloaded') + '\n');
 }
 
-function fail(json: boolean, reason: string, message: string, hint: string): void {
-  if (json) writeJson({ ok: false, reason, message, hint });
+function fail(json: boolean, code: string, message: string, hint: string): void {
+  if (json) writeJsonError(code, message, hint);
   else {
     process.stdout.write(warn(message) + '\n');
     process.stdout.write(`  ${hint}\n`);
@@ -200,7 +197,7 @@ async function down(args: Args): Promise<void> {
     }
     const message = 'the devnet controller is gone but its services are still listening';
     const hint = `ports still held: ${held.join(', ')} — they must be freed before the next start`;
-    if (json) writeJson({ ok: false, reason: 'orphaned_services', message, hint, portsHeld: held });
+    if (json) writeJsonError('orphaned_services', message, hint, { portsHeld: held });
     else {
       process.stdout.write(warn(message) + '\n');
       process.stdout.write(`  ${hint}\n`);
@@ -215,8 +212,7 @@ async function down(args: Args): Promise<void> {
     const message = 'stop did not free every port';
     const hint = `still held: ${result.portsStillHeld.join(', ')}`;
     if (json) {
-      writeJson({
-        ok: false, reason: 'stop_incomplete', message, hint,
+      writeJsonError('stop_incomplete', message, hint, {
         pid, portsHeld: result.portsStillHeld, escalatedToKill: result.escalatedToKill,
       });
     } else {
