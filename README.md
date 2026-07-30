@@ -59,6 +59,12 @@ it marks which commands are implemented.
 
 Installing will provide two binaries: `ada` and `ada-mcp`.
 
+## How it works
+
+`docs/ARCHITECTURE.md` walks a command from keystroke to output, and explains the two things
+that are easy to get wrong: the devnet serves two different HTTP surfaces, and stopping it means
+signalling a process group rather than a process.
+
 ## Built on
 
 Deliberately composed rather than written from scratch:
