@@ -18,7 +18,7 @@ counterpart, reason given) · **open** (needs a decision)
 
 | | Count |
 |---|---|
-| Done | 5 commands, 22 offline tests, devnet lifecycle proven end to end |
+| Done | 5 commands, 41 offline tests, devnet lifecycle proven end to end |
 | Next | wallets, balance, utxos, airdrop, transfer |
 | Planned | MCP server, assets, swap, publish |
 | No counterpart | 2 (`dust register`, `dust status`) |
@@ -144,8 +144,9 @@ rather than mirroring `mn` reflexively.
 Detail and ordering rationale in `tasks/todo.md`. Summary of what each stage closes:
 
 **1 · Walking skeleton — done.** Scaffold, config, error taxonomy, devnet lifecycle, `tip`,
-`info`, `help`. Devnet starts in ~9s with an advancing tip; 22 offline tests including a
-fails-before/passes-after regression.
+`info`, `help`. Devnet starts in ~9s with an advancing tip; 41 offline tests including
+fails-before/passes-after regressions for the readiness wait, the process-group stop and the flag
+parser.
 
 **2 · Wallets and money — next.** Wallets, `balance`, `utxos`, `airdrop`, `transfer`,
 `fee estimate`, `params`, `localnet addresses`. **Closing this is what unblocks the SDK work**,

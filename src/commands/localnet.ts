@@ -90,7 +90,7 @@ async function up(args: Args): Promise<void> {
 
   if (!devkitComponentsReady()) {
     if (!json) {
-      process.stdout.write('devkit components missing — downloading once (node ~800MB, indexer ~22MB)...\n');
+      process.stdout.write('devkit components missing — downloading once (about 1.4GB total)...\n');
     }
     const got = await bootstrapComponents(900_000, (_waited, what) => {
       if (!json) process.stdout.write(`  fetching ${what}...\n`);
@@ -160,7 +160,7 @@ async function bootstrap(args: Args): Promise<void> {
     else process.stdout.write(ok('devkit components already present') + '\n');
     return;
   }
-  if (!json) process.stdout.write('downloading devkit components (node ~800MB, indexer ~22MB, one time)...\n');
+  if (!json) process.stdout.write('downloading devkit components (about 1.4GB, one time)...\n');
   const got = await bootstrapComponents(900_000, (_waited, what) => {
     if (!json) process.stdout.write(`  fetching ${what}...\n`);
   });

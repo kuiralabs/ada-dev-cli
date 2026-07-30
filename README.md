@@ -51,17 +51,19 @@ any Cardano code, whether or not you use this tool.
 | `ada address inspect` | Decode an address and show its parts |
 | `ada tip` | Current chain tip |
 | `ada fee estimate` | Fee, change, and minimum-value check before committing |
-| `ada localnet up/stop/down/status/logs/reset` | Manage a local devnet via Docker |
+| `ada localnet up/stop/down/status/logs` | Manage a local devnet |
 | `ada localnet snapshot/rollback` | Rollback testing against a forked chain |
 | `ada config get/set/unset` | Persistent config — network, active wallet, endpoints |
 | `ada localnet bootstrap` | Download devkit components without starting anything |
+| `ada localnet reset` | Wipe the chain and start fresh |
 | `ada help [command]` | Usage for all or one command |
 | `ada manual` | Full reference — every command, every flag |
 
 Working today: `localnet`, `tip`, `info`, `config`, `help`. Run `ada help` for the current list —
 it marks which commands are implemented.
 
-Installing will provide two binaries: `ada` and `ada-mcp`.
+Installing currently provides `ada`. The `ada-mcp` server binary arrives with the agent surface
+(stage 3 in `tasks/IMPLEMENTATION.md`).
 
 ## How it works
 
@@ -84,8 +86,9 @@ Deliberately composed rather than written from scratch:
 
 ## MCP server
 
-`ada-mcp` exposes the wallet operations as tools, so an agent can fund a wallet, send a transfer,
-and read back the result without a human copying commands between a terminal and a chat window.
+`ada-mcp` will expose the wallet operations as tools, so an agent can fund a wallet, send a
+transfer, and read back the result without a human copying commands between a terminal and a chat
+window. Not built yet — stage 3.
 
 Yaci DevKit ships its own MCP server for chain operations — devnet lifecycle, faucet, rollback.
 The two are complementary and do not overlap: theirs owns the chain, this one owns the wallet.

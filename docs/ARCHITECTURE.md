@@ -68,8 +68,8 @@ instance.
 - Services running with no controller. Same conflict, arrived at from the other side. Refuse to
   start and say which ports are occupied.
 
-**6 · Are the components downloaded?** The devkit needs `cardano-node` (~800 MB) and the indexer
-(~22 MB), fetched once into `~/.yaci-cli`. Checks are size-aware, so an interrupted download
+**6 · Are the components downloaded?** The devkit needs the `cardano-node` binaries (about 970 MB)
+and the indexer (about 430 MB), fetched once into `~/.yaci-cli`. Checks are size-aware, so an interrupted download
 counts as absent rather than as present-but-broken.
 
 **7 · Start it, detached.** `startDevnet` spawns the devkit with output redirected to

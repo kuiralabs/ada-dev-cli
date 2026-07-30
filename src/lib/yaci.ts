@@ -114,8 +114,8 @@ export function devkitComponentsReady(): boolean {
 }
 
 /**
- * One-time download of the devkit components: the cardano-node binaries (~800MB)
- * and the indexer (~22MB).
+ * One-time download of the devkit components: the cardano-node binaries (about
+ * 970MB) and the indexer (about 430MB).
  *
  * Spawned detached and polled rather than awaited, because the devkit does not
  * exit after running a passed-in command — it drops into its interactive shell

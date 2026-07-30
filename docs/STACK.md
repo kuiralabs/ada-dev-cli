@@ -26,7 +26,7 @@ This tool is one command surface over the good parts. It composes them; it does 
 
 ### Yaci DevKit — the chain on your laptop
 
-**Made by:** BloxBean, an independent group that builds most of the practical Cardano developer
+**Made by:** BloxBean, an independent group behind much of Cardano's practical developer
 tooling.
 
 **What it is:** a private, disposable Cardano blockchain that runs on your machine. Not a
@@ -41,8 +41,9 @@ This is the direct counterpart of the Docker localnet that `midnight-wallet-cli`
 
 ### yaci-cli — the conductor
 
-**What it is:** the actual program inside Yaci DevKit. A Java application compiled to a native
-Mac/Linux binary, so there is no JVM to install.
+**What it is:** the actual program inside Yaci DevKit. A Java application compiled ahead of time to
+a native binary, so there is no JVM to install. Its npm distribution ships **macOS arm64 and Linux
+x64 only** — see `docs/DEVNET.md`.
 
 **What it does:** it is the stage manager for the local chain. It downloads the real Cardano
 binaries, writes the genesis and config files, starts the node, creates and funds the twenty test
@@ -61,7 +62,7 @@ tool drives it non-interactively instead, starting it once and then leaving it a
 **What they are:** the genuine blockchain software. `cardano-node` is the node. `cardano-cli` is
 the official low-level tool. `cardano-submit-api` accepts transactions over HTTP.
 
-Yaci downloads these (~800 MB, once) rather than reimplementing them. **The chain running locally
+Yaci downloads these (about 970 MB, once) rather than reimplementing them. **The chain running locally
 is the same software that runs mainnet**, which is what makes local testing meaningful.
 
 Note: `cardano-cli` is **not a wallet.** It has no key management and no derivation — you query the
@@ -97,7 +98,7 @@ yet send an API key.
 
 ### MeshJS — the wallet and transaction brain (stage 2)
 
-**Made by:** the MeshJS team, funded through Cardano's Catalyst programme.
+**Made by:** the MeshJS team.
 
 **What it is:** a TypeScript SDK for Cardano. It is the piece that will do the actual money work:
 turn a recovery phrase into keys, build transactions, sign them, mint native tokens, and co-sign a
@@ -151,7 +152,7 @@ Worth being blunt about the ratio.
 **Integrated (other people's work, hundreds of thousands of lines):** the blockchain, the node, the
 indexer, the local-network manager, the wallet and transaction SDK, the address tool.
 
-**Written (ours, roughly a thousand lines):**
+**Written (ours, about 1,700 lines plus 500 of tests):**
 - one command vocabulary over all of it
 - one config so you are not passing URLs and network names to every call
 - lifecycle that actually works — start it, know when it is ready, stop it *completely*

@@ -14,7 +14,8 @@ first three stages are the loop everything else gets debugged inside.
 - [x] Error taxonomy with stable reasons and exit codes
 - [x] `localnet up/down/status/logs/bootstrap` wrapping Yaci DevKit
 - [x] `tip`, `info`, `config`, `help`
-- [x] Offline tests (22) including a fails-before/passes-after readiness regression
+- [x] Offline tests (41) including fails-before/passes-after regressions for the readiness
+      wait, the process-group stop, and the flag parser
 
 **Done:** devnet starts in ~9s and reports an advancing tip. See `docs/DEVNET.md` for the
 devkit behaviour this uncovered — two distinct APIs, and an indexer that ships separately and

@@ -1,7 +1,7 @@
 # The local devnet
 
 `ada localnet` runs a real Cardano chain on your machine — a block a second, twenty pre-funded
-addresses, and an HTTP API to query it. First run downloads the components; after that a devnet
+addresses, and an HTTP API to query it. It is a native process, not a container. First run downloads the components; after that a devnet
 starts in under ten seconds.
 
 ```
@@ -19,15 +19,19 @@ reimplements. Everything below is behaviour worth knowing when something looks w
 
 ## What actually runs
 
-Five processes, on fixed ports:
+Four processes, on fixed ports:
 
 | Service | Port | What it is |
 |---|---|---|
+| `yaci-cli` | 10000 | the devnet's control API: faucet, reset, protocol parameters |
 | `cardano-node` | 3001 | the chain itself |
-| Yaci Store | 8080 | the **Blockfrost-compatible API** — what `tip`, balances and UTxO queries use |
-| devkit admin | 10000 | devnet control: faucet, reset, protocol parameters |
 | `cardano-submit-api` | 8090 | transaction submission |
-| Prometheus | 12798 | metrics |
+| Yaci Store | 8080 | the **Blockfrost-compatible API** — what `tip`, balances and UTxO queries use |
+
+The devnet's own description also advertises Ogmios (1337), Kupo (1442) and a metrics port
+(12798). None of them are served in this configuration — they are separate components, disabled
+by default, the same way the indexer is. Do not plan against a port just because the devnet
+mentions it.
 
 Readiness means **the API on 8080 answers**, not that a process exists. A running node that is
 not yet serving is not a usable devnet, and treating the two as the same thing produces a tool
@@ -49,12 +53,14 @@ authoritative list rather than anything written here.
 The tool keeps both prefixes as declared constants and composes every path from one of them, so
 a query can never accidentally be sent to the wrong surface.
 
-## First run downloads about 820 MB
+## First run downloads about 1.4 GB
 
 Two components, fetched once into `~/.yaci-cli`:
 
-- `cardano-node`, `cardano-cli` and `cardano-submit-api` — roughly 800 MB
-- the Yaci Store indexer — roughly 22 MB
+- `cardano-node`, `cardano-cli` and `cardano-submit-api` — about 970 MB
+- the Yaci Store indexer — about 430 MB
+
+Both land in `~/.yaci-cli`, which also holds chain data, so budget more than the download size.
 
 `ada localnet up` fetches whatever is missing before starting. `ada localnet bootstrap` does only
 the download, which is useful on a slow connection or in a CI image build.
@@ -102,8 +108,33 @@ The devnet is disposable. `ada localnet down` then `up` gives a fresh chain from
 usually faster and more reliable than reasoning about accumulated state. Nothing on a devnet is
 worth preserving.
 
+## Platform support is narrower than it looks
+
+The devkit's npm distribution resolves exactly two platform packages: **macOS arm64** and **Linux
+x64**. There is no Intel-Mac build, no Linux arm64 build, and no Windows build on this path — an
+unsupported platform fails at launch with "unsupported platform" rather than degrading.
+
+Yaci DevKit also ships as Docker images, which cover more platforms. This tool does not use that
+route today; if Intel-Mac or Linux-arm64 support is needed, that is where to look.
+
+## Block time, and what the devkit can be told to do
+
+`ada localnet up --block-time <seconds>` passes through to the devkit. On the version pinned here
+the accepted range is **1 to 20 seconds** — **sub-second block times are not available**, whatever
+the marketing elsewhere suggests. A newer devkit line adds them; this one does not.
+
+The devkit itself accepts more than this tool exposes, and two are worth knowing about because
+they make otherwise-awkward tests deterministic:
+
+- **`--era`** — `babbage` or `conway`, defaulting to `conway`. Nothing later is selectable.
+- **`--genesis-profile`** — `zero_fee`, `zero_min_utxo_value`, or both. A chain with no fees or no
+  minimum-value rule is the clean way to test paths that those rules otherwise dominate.
+- Node port, submit-API port, epoch length, and fresh genesis keys are all settable too.
+
+None of these are surfaced by `ada` yet. When a test needs one, the flag exists.
+
 ## Ports are fixed for now
 
-The service ports above are the devkit defaults and are not yet configurable through this tool.
-Running two devnets side by side, or working around a port that something else already owns, is
-not supported today.
+The service ports above are the devkit defaults. The devkit can be told to use others; **this tool
+does not expose that yet**, so running two devnets side by side, or working around a port something
+else already owns, is not supported today.
