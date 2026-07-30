@@ -40,7 +40,13 @@ ahead of it.
 **Done:** verified on a live devnet — 1000 ADA funded, 25 sent, fee 0.169813, alice 974.830187 and
 bob 25, reconciling to the lovelace.
 
-Deferred, not blocking: `params`, `localnet addresses`.
+Also landed, because each was a single call once the plumbing existed: `params` (fee
+coefficients and min-UTxO), `address inspect`, `status` (one-shot health), and `localnet reset` via
+the devkit's control API — verified to wipe the chain to genesis while leaving wallet keys intact.
+
+**Blocked, not deferred:** `localnet addresses` has no machine-readable source (the devkit prints
+its twenty addresses to a log; `cluster-info.json` has ports but not addresses), and
+`address derive` needs the `cardano-address` binary installed.
 
 ## 3 · Agent surface — contract landed, server pending
 

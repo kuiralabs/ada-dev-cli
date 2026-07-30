@@ -16,7 +16,7 @@ interface CommandDoc {
 }
 
 export const COMMANDS: CommandDoc[] = [
-  { name: 'localnet', usage: 'ada localnet <up|down|status|logs>', summary: 'Manage the local devnet', implemented: true },
+  { name: 'localnet', usage: 'ada localnet <up|down|status|logs|bootstrap|reset>', summary: 'Manage the local devnet', implemented: true },
   { name: 'tip', usage: 'ada tip', summary: 'Current chain tip', implemented: true },
   { name: 'info', usage: 'ada info', summary: 'Active network, endpoints and config location', implemented: true },
   { name: 'config', usage: 'ada config <list|get|set|unset> [key] [value]', summary: 'Persistent configuration', implemented: true },
@@ -29,11 +29,12 @@ export const COMMANDS: CommandDoc[] = [
   // Designed in docs/COMMANDS.md and not yet built. Listed so an agent reading
   // this surface learns what is coming instead of concluding the tool is
   // finished — an empty planned list is a claim, and it was a false one.
-  { name: 'params', usage: 'ada params', summary: 'Protocol parameters — fee coefficients, min-UTxO, limits', implemented: false },
+  { name: 'params', usage: 'ada params', summary: 'Protocol parameters — fee coefficients, min-UTxO, limits', implemented: true },
   { name: 'asset', usage: 'ada asset <mint|send>', summary: 'Native assets and bundles', implemented: false },
   { name: 'swap', usage: 'ada swap <build|inspect|sign|submit>', summary: 'Two-party atomic swap', implemented: false },
-  { name: 'address', usage: 'ada address <derive|inspect>', summary: 'Derive or decode an address', implemented: false },
-  { name: 'status', usage: 'ada status', summary: 'Overall health of the configured network', implemented: false },
+  { name: 'address', usage: 'ada address inspect <addr>', summary: 'Decode an address into its parts', implemented: true },
+  { name: 'status', usage: 'ada status', summary: 'One-shot health check: chain, devnet, wallet', implemented: true },
+  { name: 'localnet addresses', usage: 'ada localnet addresses', summary: 'The devnet pre-funded addresses', implemented: false },
   { name: 'manual', usage: 'ada manual', summary: 'Full reference — every command, every flag', implemented: false },
 ];
 

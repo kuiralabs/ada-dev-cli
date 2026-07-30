@@ -3,8 +3,8 @@
 You have access to the `ada` CLI for Cardano. This document teaches you how to drive it. Read it
 once at the start of a session; use it as reference throughout.
 
-**Scope note:** wallets, balances, funding and ADA transfers work. Native assets and atomic swaps
-are designed but not built. **Never invent a command.** Ask the tool what it has:
+**Scope note:** wallets, balances, funding and ADA transfers work, as do the devnet lifecycle and
+chain inspection. Native assets and atomic swaps are designed but not built. **Never invent a command.** Ask the tool what it has:
 
 ```
 ada help --json
@@ -71,8 +71,12 @@ Never pass a boolean flag a value. `--json` and `--help` take none; `ada localne
 | "is the devnet running?" | `ada localnet status --json` |
 | "where are the devnet logs?" | `ada localnet logs --json` |
 | "download the devnet components" | `ada localnet bootstrap --json` |
+| "reset the chain" / "wipe the devnet" | `ada localnet reset --yes --json` — ask consent first, all balances are lost |
 | "what block are we on?" / "is the chain producing?" | `ada tip --json` |
 | "what network am I on?" / "is it reachable?" | `ada info --json` |
+| "is everything working?" / "health check" | `ada status --json` — chain, devnet and wallet in one call |
+| "what are the fees?" / "what's the min-UTxO?" | `ada params --json` |
+| "decode this address" / "is this a stake address?" | `ada address inspect <addr> --json` |
 | "switch to preprod" | `ada config set network preprod --json` |
 | "show my settings" | `ada config list --json` |
 | "what can this tool do?" | `ada help --json` |
@@ -89,6 +93,10 @@ Never pass a boolean flag a value. `--json` and `--help` take none; `ada localne
 | "send 10 ADA to X" | dry run first, show the fee, get consent, then add `--yes` |
 
 Anything about native assets or swaps: **not built yet.** Say so plainly rather than improvising.
+
+`ada status --json` is the right first call when something is wrong: it reports chain reachability,
+the devnet process, the active wallet and a single `healthy` boolean, and it never throws for an
+unreachable chain — an unreachable chain is the answer, not an error.
 
 ## Sending ADA — the two-step flow
 
@@ -143,6 +151,7 @@ Match on `code`, and prefer `hint` when it is present.
 | `submit_failed` | The chain rejected it after signing | Chain state moved between build and submit. Retry once |
 | `mainnet_refused` | A wallet operation was attempted on mainnet | Not supported. Keys are stored unencrypted; use a test network |
 | `wallet_open_failed` | The stored phrase could not be loaded | The wallet file may be corrupt |
+| `reset_failed` | The devnet refused a reset | Check `ada localnet status --json`; the control API may be down |
 
 **On a devnet failure, read `logTail` before guessing.** It is included in the response precisely so
 you do not have to open a file, and it has named the cause every time so far.
@@ -168,6 +177,8 @@ you do not have to open a file, and it has named the cause every time so far.
 - `wallet remove --yes` — deletes the only copy of a recovery phrase. Irreversible.
 - `transfer --yes` — moves money. Follow the two-step flow above.
 - `airdrop` — safe on devnet, where the money is worthless.
+- `localnet reset --yes` — wipes the chain to genesis. Wallet **keys survive**, every **balance does
+  not**. Say that before doing it.
 
 **Transfers require explicit consent for the amount and the recipient, restated verbatim and never
 paraphrased.** The dry run exists so you can show real numbers rather than estimates.

@@ -18,8 +18,8 @@ counterpart, reason given) · **open** (needs a decision)
 
 | | Count |
 |---|---|
-| Done | 10 commands, 93 offline tests, agent output contract, **the fund-read-transfer loop proven on a real chain** |
-| Next | MCP server, `params`, `localnet addresses`, preprod verification |
+| Done | 14 commands, 95 offline tests, agent output contract, **the fund-read-transfer loop proven on a real chain** |
+| Next | **MCP server**, then assets and swap. `localnet addresses` and preprod verification are blocked, not deferred |
 | Planned | MCP server, assets, swap, publish |
 | No counterpart | 2 (`dust register`, `dust status`) |
 | Open | 3 (`serve`, `dev`, `contract`) |
@@ -39,9 +39,9 @@ counterpart, reason given) · **open** (needs a decision)
 | `balance` | `balance` — ADA **and** every native asset held | **done** |
 | `transfer` | `transfer` — dry run by default; `--yes` submits | **done** |
 | `airdrop` | `airdrop` — devkit faucet; devnet only | **done** |
-| `address --seed` | `address derive` — delegates to `cardano-address`, never reimplemented | planned · stage 4 |
-| `genesis-address` | `localnet addresses` — the 20 pre-funded devnet addresses | planned · stage 2 |
-| `inspect-cost` | `params` — protocol parameters: fee coefficients, min-UTxO, max sizes | planned · stage 2 |
+| `address --seed` | `address derive` — **blocked**: delegates to the `cardano-address` binary, which is not installed |
+| `genesis-address` | `localnet addresses` — **blocked**: the devkit exposes the 20 addresses only through its interactive shell, and `cluster-info.json` does not carry them |
+| `inspect-cost` | `params` — fee coefficients, min-UTxO, limits | **done** |
 | `config get/set/unset` | `config get/set/unset/list` | **done** |
 | `cache clear` | `cache clear` | planned · stage 4 |
 | `localnet up` | `localnet up` | **done** |
@@ -49,8 +49,8 @@ counterpart, reason given) · **open** (needs a decision)
 | `localnet down` | `localnet down` | **done** |
 | `localnet status` | `localnet status` — process and API reported separately | **done** |
 | `localnet logs` | `localnet logs` | **done** |
-| `localnet clean` | `localnet reset` | planned · stage 4 |
-| `status` | `status` | planned · stage 4 |
+| `localnet clean` | `localnet reset` — one control-API call, `--yes` required | **done** |
+| `status` | `status` — chain, devnet and wallet in one call | **done** |
 | `help` | `help` — marks which commands are implemented | **done** |
 | `manual` | `manual` | planned · stage 4 |
 | `dust register` | — | **none** |
@@ -99,7 +99,7 @@ These are additions, not parity gaps. They exist because the ledger is different
 | `swap build` | Two-party atomic swap needs no smart contract — a ledger primitive | planned · stage 6 |
 | `swap inspect` | A received offer is untrusted input; understanding it must be separable from signing it | planned · stage 6 |
 | `swap sign` / `swap submit` | Co-signing one transaction built from both parties' inputs | planned · stage 6 |
-| `address inspect` | Addresses carry a payment credential and a stake credential worth decoding | planned · stage 4 |
+| `address inspect` | Addresses carry a payment credential and a stake credential worth decoding | **done** |
 | `localnet snapshot` / `rollback` | The devkit can fork the chain, so rollback behaviour is testable | planned · stage 4 |
 
 ---
@@ -159,8 +159,14 @@ Still open in this area: `params` and `localnet addresses`, neither of which blo
 `docs/SKILL.md` are done, because the contract could not be retrofitted once commands multiplied.
 Remaining: `ada-mcp` itself, and the two-step confirmation flow for anything that moves money.
 
-**4 · Hardening.** Preprod alongside devnet, error taxonomy documented, `address derive/inspect`,
-`status`, `manual`, `cache clear`, `localnet reset/snapshot/rollback`, `test`.
+**4 · Hardening.** What is left after the cheap items were taken early: `manual`, `cache clear`,
+`localnet snapshot/rollback`, `test`, and verifying preprod.
+
+Two items here are **blocked rather than deferred**, and the reason is worth keeping:
+`address derive` needs the `cardano-address` binary installed, and `localnet addresses` has no
+machine-readable source — the devkit prints the twenty addresses to its log and its
+`cluster-info.json` carries ports and chain parameters but not addresses. Log-scraping was rejected
+as too fragile for something a user would rely on.
 
 **5 · Assets.** Mint under a policy, multi-asset bundles, metadata convention.
 

@@ -22,6 +22,7 @@ export const ENDPOINTS = {
 export const DEVKIT_ENDPOINTS = {
   topup: `${LOCAL_CLUSTER_API}/addresses/topup`,
   clusterInfo: `${LOCAL_CLUSTER_API}/admin/devnet`,
+  reset: `${LOCAL_CLUSTER_API}/admin/devnet/reset`,
 } as const;
 
 /** Default devnet ports as shipped by Yaci DevKit. Overridable via config so a

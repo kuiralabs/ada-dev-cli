@@ -8,7 +8,7 @@ import { loadConfig, resolveNetwork } from '../lib/cli-config.ts';
 import { usageError } from '../lib/errors.ts';
 import { writeJson, writeJsonError } from '../lib/json-output.ts';
 import { isReachable } from '../lib/http.ts';
-import { ENDPOINTS, DEVNET_READY_TIMEOUT_MS } from '../lib/constants.ts';
+import { ENDPOINTS, DEVKIT_ENDPOINTS, DEVNET_READY_TIMEOUT_MS } from '../lib/constants.ts';
 import { EXIT_NOT_RUNNING } from '../lib/exit-codes.ts';
 import {
   startDevnet, stopDevnet, waitForDevnet, devnetPid,
@@ -18,7 +18,7 @@ import {
 } from '../lib/yaci.ts';
 import { fields, heading, ok, warn, emphasis } from '../ui/format.ts';
 
-const SUBCOMMANDS = ['up', 'down', 'stop', 'status', 'logs', 'bootstrap'] as const;
+const SUBCOMMANDS = ['up', 'down', 'stop', 'status', 'logs', 'bootstrap', 'reset'] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number];
 
 export default async function localnet(args: Args): Promise<void> {
@@ -37,6 +37,7 @@ export default async function localnet(args: Args): Promise<void> {
     case 'status': return status(args);
     case 'logs': return logs(args);
     case 'bootstrap': return bootstrap(args);
+    case 'reset': return reset(args);
   }
 }
 
@@ -148,6 +149,58 @@ async function up(args: Args): Promise<void> {
   process.stdout.write(
     ok(`devnet ready in ${(result.waitedMs / 1000).toFixed(1)}s at ${emphasis(target.apiUrl)}`) + '\n',
   );
+}
+
+/**
+ * Wipe the chain back to genesis without restarting the devnet.
+ *
+ * The devkit exposes this on its control API, so it is one call rather than a
+ * stop-and-start — which matters because a restart re-downloads nothing but does
+ * cost ten seconds, and resetting is something you do often.
+ *
+ * Requires --yes: every wallet's funds and history vanish. That is normally fine on
+ * a disposable chain, but it should be a decision rather than a typo.
+ */
+async function reset(args: Args): Promise<void> {
+  const json = hasFlag(args, 'json');
+  const target = devnetTarget();
+
+  if (!hasFlag(args, 'yes')) {
+    throw usageError(
+      'reset wipes the devnet chain back to genesis',
+      'every balance and transaction on it is lost — pass --yes to confirm',
+    );
+  }
+
+  if (!(await isReachable(target.apiUrl, ENDPOINTS.latestBlock))) {
+    return fail(json, 'devnet_not_running', 'the devnet is not running',
+      'start it with: ada localnet up');
+  }
+
+  const adminUrl = target.adminUrl;
+  if (!adminUrl) {
+    return fail(json, 'config_error', 'no control URL configured for the devnet',
+      'set it with: ada config set endpoints.devnet.adminUrl <url>');
+  }
+
+  try {
+    const res = await fetch(`${adminUrl}${DEVKIT_ENDPOINTS.reset}`, { method: 'POST' });
+    if (!res.ok) {
+      return fail(json, 'reset_failed', `the devnet refused the reset (${res.status})`,
+        `check ${devnetLogPath()}`);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return fail(json, 'reset_failed', `could not reach the control API: ${message}`,
+      'check: ada localnet status');
+  }
+
+  if (json) {
+    writeJson({ status: 'reset', note: 'the chain is back at genesis; wallet keys are untouched' });
+    return;
+  }
+  process.stdout.write(ok('devnet reset to genesis') + '\n');
+  process.stdout.write('  wallet keys are untouched, but every balance is gone — fund again with: ada airdrop 1000\n');
 }
 
 async function bootstrap(args: Args): Promise<void> {
