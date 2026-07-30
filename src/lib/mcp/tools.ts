@@ -259,6 +259,40 @@ export const TOOLS: ToolDef[] = [
     toArgv: () => ['down'],
   },
 
+  {
+    name: 'ada_asset_policy',
+    description:
+      'The minting policy id this wallet mints under. Deterministic from the wallet, so the same '
+      + 'wallet always mints under the same policy. It is half of every asset identifier.',
+    annotations: { readOnlyHint: true },
+    inputSchema: { type: 'object', properties: { wallet: { type: 'string' }, network: NETWORK } },
+    command: 'asset',
+    toArgv: (i) => withNetwork(i, str(i.wallet) ? ['policy', '--wallet', str(i.wallet)!] : ['policy']),
+  },
+  {
+    name: 'ada_swap_inspect',
+    description:
+      'What a received swap offer would actually do to your balance. **Read-only and always safe.** '
+      + 'The figures are derived from the transaction itself, not from the offer\'s description — an '
+      + 'offer whose description was edited is flagged as misrepresented. Always call this before '
+      + 'ada_swap_sign, and show the user the real numbers rather than the sender\'s claim.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        offer: { type: 'string', description: 'The offer blob from ada_swap_build.' },
+        wallet: { type: 'string' }, network: NETWORK,
+      },
+      required: ['offer'],
+    },
+    command: 'swap',
+    toArgv: (i) => {
+      const argv = ['inspect', String(i.offer)];
+      const w = str(i.wallet);
+      return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
+    },
+  },
+
   // ── Requires consent ──────────────────────────────────────
   {
     name: 'ada_transfer',
@@ -303,6 +337,129 @@ export const TOOLS: ToolDef[] = [
     toArgv: (i) => ['remove', String(i.name), '--yes'],
     describeForConsent: (i) =>
       `Permanently delete wallet ${String(i.name)} and its recovery phrase. This cannot be undone.`,
+  },
+  {
+    name: 'ada_asset_mint',
+    description:
+      'Mint a native asset under this wallet\'s policy. Returns a pending token; get consent, then '
+      + 'call ada_confirm. Minting creates permanent supply and costs a fee.',
+    annotations: { destructiveHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Asset name, 1-32 bytes.' },
+        qty: { type: 'string', description: 'Whole number above zero.' },
+        wallet: { type: 'string' }, network: NETWORK,
+      },
+      required: ['name', 'qty'],
+    },
+    command: 'asset',
+    toArgv: (i) => {
+      const argv = ['mint', '--name', String(i.name), '--qty', String(i.qty), '--yes'];
+      const w = str(i.wallet);
+      return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
+    },
+    describeForConsent: (i) => `Mint ${String(i.qty)} of a new asset named "${String(i.name)}"`,
+  },
+  {
+    name: 'ada_asset_send',
+    description:
+      'Send native assets as a bundle — several distinct assets in one transaction. Returns a '
+      + 'pending token; get consent, then call ada_confirm.',
+    annotations: { destructiveHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', description: 'Recipient bech32 address.' },
+        assets: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Entries of the form "<unit>:<quantity>", where unit is policy id + hex name.',
+        },
+        wallet: { type: 'string' }, network: NETWORK,
+      },
+      required: ['to', 'assets'],
+    },
+    command: 'asset',
+    toArgv: (i) => {
+      const assets = Array.isArray(i.assets) ? i.assets.map(String) : [];
+      const argv = ['send', String(i.to), ...assets, '--yes'];
+      const w = str(i.wallet);
+      return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
+    },
+    describeForConsent: (i) =>
+      `Send ${(Array.isArray(i.assets) ? i.assets : []).join(', ')} to ${String(i.to)}`,
+  },
+  {
+    name: 'ada_swap_build',
+    description:
+      'Build a two-party atomic swap offer and partially sign it. **This commits you**: if the '
+      + 'counterparty signs, the swap executes. Returns a pending token; get consent, then call '
+      + 'ada_confirm. The result contains an offer blob to send to the counterparty.',
+    annotations: { destructiveHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        counterparty: { type: 'string', description: 'Their bech32 address.' },
+        give: { type: 'string', description: 'What you give: "10ADA" or "<unit>:<qty>", comma-separated.' },
+        want: { type: 'string', description: 'What you want back, same format.' },
+        wallet: { type: 'string' }, network: NETWORK,
+      },
+      required: ['counterparty', 'give', 'want'],
+    },
+    command: 'swap',
+    toArgv: (i) => {
+      const argv = ['build', '--with', String(i.counterparty), '--give', String(i.give),
+        '--want', String(i.want), '--yes'];
+      const w = str(i.wallet);
+      return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
+    },
+    describeForConsent: (i) =>
+      `Offer ${String(i.give)} in exchange for ${String(i.want)} with ${String(i.counterparty)}. `
+      + 'If they accept, this executes.',
+  },
+  {
+    name: 'ada_swap_sign',
+    description:
+      'Sign a received swap offer, giving up your side. Refuses an offer that is expired, on the '
+      + 'wrong network, unsigned by the maker, or whose description does not match its transaction. '
+      + 'Returns a pending token; **call ada_swap_inspect first and show the user the real figures**, '
+      + 'then get consent and call ada_confirm.',
+    annotations: { destructiveHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        offer: { type: 'string' }, wallet: { type: 'string' }, network: NETWORK,
+      },
+      required: ['offer'],
+    },
+    command: 'swap',
+    toArgv: (i) => {
+      const argv = ['sign', String(i.offer), '--yes'];
+      const w = str(i.wallet);
+      return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
+    },
+    describeForConsent: () =>
+      'Sign this swap offer, giving up your side of it. Confirm the figures from ada_swap_inspect first.',
+  },
+  {
+    name: 'ada_swap_submit',
+    description:
+      'Submit a fully-signed swap. Irreversible once it confirms. Returns a pending token; get '
+      + 'consent, then call ada_confirm.',
+    annotations: { destructiveHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: { offer: { type: 'string' }, wallet: { type: 'string' }, network: NETWORK },
+      required: ['offer'],
+    },
+    command: 'swap',
+    toArgv: (i) => {
+      const argv = ['submit', String(i.offer)];
+      const w = str(i.wallet);
+      return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
+    },
+    describeForConsent: () => 'Submit this swap to the chain. Once it confirms it cannot be undone.',
   },
   {
     name: 'ada_localnet_reset',

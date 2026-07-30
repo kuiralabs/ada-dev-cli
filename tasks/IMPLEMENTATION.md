@@ -21,10 +21,11 @@ counterpart, reason given) · **open** (needs a decision)
 
 | | State |
 |---|---|
-| Shipped | 14 commands · 18 MCP tools · 140 offline tests |
+| Shipped | 15 commands · 25 MCP tools · 155 offline tests |
 | Verified live | devnet end to end; **preprod reads with no API key and no setup** |
-| Building now | **swap** — the differentiator |
+| Building now | publishing prep. Every feature stage is complete |
 | Left after that | `manual`, `cache clear`, `localnet snapshot/rollback`, `test`, publish |
+| Feature surfaces | every command has an MCP tool except `config`, `info` and `manual` — deliberate, see below |
 | Blocked, not deferred | `localnet addresses` (no machine-readable source) · `address derive` (needs the `cardano-address` binary) |
 | No counterpart in `mn` | `dust register`, `dust status` — Cardano pays fees in ADA, so the category does not exist |
 | Needs a decision | `serve`, `dev`, `contract` |
@@ -191,14 +192,22 @@ held.
 It also surfaces the ADA that must travel with a token output, which otherwise looks like ADA
 going missing.
 
-**6 · Swap.** The differentiator, and the reason this tool is worth building rather than assembling
-by hand each time. A two-party atomic swap needs no smart contract on Cardano — one transaction from
-both parties' inputs, both signatures, so either both sides move or nothing does.
+**6 · Swap — done.** `swap build`, `inspect`, `sign`, `submit`. Verified live: alice gave 20 Silk
+for 50 ADA from bob, both balances reconciling to the lovelace.
 
-`swap inspect` is the safety-critical piece and stays separate from `swap sign`: a received offer is
-untrusted input, and understanding one must be possible repeatedly, from a script, with no signature
-anywhere near it. Every adversarial case must fail safely — partial signature, replay, expiry,
-mutation after signing, and a counterparty walking away.
+`swap inspect` is the safety-critical piece and stays separate from `swap sign`, because a received
+offer is untrusted input and understanding one must be possible repeatedly, from a script, with no
+signature anywhere near it.
+
+**A real vulnerability was found here by testing and is now closed.** An offer carries a transaction
+*and* a description of it. The first implementation displayed and signed against the description, so
+editing one JSON field produced an offer reading "you give 0.000001 ADA" while the transaction took
+50. Everything shown or checked is now derived from the transaction itself, with the description
+treated as an unverified claim — mismatches are reported as `offer_misrepresented` and refused.
+
+Adversarial cases, each verified to fail safely: replay of a spent swap, the maker signing as taker,
+wrong network, expired offer, unsigned by the maker, garbage input, unknown version, and a
+misrepresented description.
 
 **7 · Publish.** npm as `ada-wallet-cli`, `docs/PUBLISHING.md`, demo.
 

@@ -66,6 +66,43 @@ export function assertMeetsMinValue(
   }
 }
 
+/**
+ * Top an output up to the ledger's minimum, returning what was added.
+ *
+ * Every Cardano output must carry ADA, so an asset-only output is invalid. When a
+ * caller constructs outputs explicitly — as a swap does — nothing attaches that
+ * ADA for them, and the transaction fails on a rule the user never asked about.
+ *
+ * The top-up is returned separately rather than folded in silently: the ADA comes
+ * out of the giver's pocket, so both sides need to see it. Someone offering "20
+ * Silk" is really offering 20 Silk plus roughly one ADA, and hiding that would
+ * make the offer a lie by omission.
+ */
+export function withMinValue(
+  address: string,
+  amount: ReadonlyArray<{ unit: string; quantity: string }>,
+  coinsPerUtxoSize: number,
+): { amount: Array<{ unit: string; quantity: string }>; adaAttached: bigint } {
+  const present = amount
+    .filter((a) => a.unit === LOVELACE_UNIT || a.unit === '')
+    .reduce((total, a) => total + BigInt(a.quantity), 0n);
+
+  // Computed against a candidate that already holds the floor, because the
+  // required minimum depends on the serialized size and a zero-lovelace entry
+  // serializes smaller than a real one.
+  const others = amount.filter((a) => a.unit !== LOVELACE_UNIT && a.unit !== '');
+  const probe = [{ unit: LOVELACE_UNIT, quantity: '1000000' }, ...others];
+  const required = getOutputMinLovelace({ address, amount: probe }, coinsPerUtxoSize);
+
+  if (present >= required) {
+    return { amount: [...amount], adaAttached: 0n };
+  }
+  return {
+    amount: [{ unit: LOVELACE_UNIT, quantity: required.toString() }, ...others],
+    adaAttached: required - present,
+  };
+}
+
 /** Sign and submit, with one error shape rather than one per command. */
 export async function signAndSubmit(ctx: ActiveContext, unsignedTx: string): Promise<string> {
   try {

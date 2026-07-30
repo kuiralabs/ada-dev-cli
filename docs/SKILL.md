@@ -10,8 +10,8 @@ and the annotations tell you what is safe to call unasked. The two-step send flo
 
 **Over the CLI**, every command takes `--json`. The rules are identical.
 
-**Scope note:** wallets, balances, funding and ADA transfers work, as do the devnet lifecycle and
-chain inspection. Native assets and atomic swaps are designed but not built. **Never invent a command.** Ask the tool what it has:
+**Scope note:** everything below works — wallets, balances, funding, ADA transfers, native assets,
+two-party atomic swaps, the devnet lifecycle and chain inspection. **Never invent a command.** Ask the tool what it has:
 
 ```
 ada help --json
@@ -104,7 +104,12 @@ Never pass a boolean flag a value. `--json` and `--help` take none; `ada localne
 | "what would it cost to send 10 ADA?" | `ada transfer <addr> 10 --json` — **no `--yes`, so nothing is sent** |
 | "send 10 ADA to X" | dry run first, show the fee, get consent, then add `--yes` |
 
-Anything about native assets or swaps: **not built yet.** Say so plainly rather than improvising.
+| "mint 100 tokens called Silk" | `ada asset mint --name Silk --qty 100 --json` — needs `--yes` to submit |
+| "what's my policy id?" | `ada asset policy --json` |
+| "send 25 Silk to X" | `ada asset send <addr> <unit>:25 --json` — dry run first, then `--yes` |
+| "swap 20 Silk for 50 ADA with X" | `ada swap build --with <addr> --give <unit>:20 --want 50ADA` |
+| "check this offer" | `ada swap inspect <offer> --json` — **always before signing** |
+| "accept the swap" | `ada swap sign <offer> --yes`, then `ada swap submit <offer>` |
 
 `ada status --json` is the right first call when something is wrong: it reports chain reachability,
 the devnet process, the active wallet and a single `healthy` boolean, and it never throws for an
@@ -136,6 +141,29 @@ reports the **real** fee, so you are showing the user a number rather than an es
 
 Never pass `--yes` on the first call. The dry run costs nothing and it is the only chance to see the
 fee before it is paid.
+
+## Swaps — what to check before signing
+
+A Cardano atomic swap is one transaction built from both parties' inputs and requiring both
+signatures, so **either both sides move or nothing does**. No smart contract is involved.
+
+The maker runs `swap build` — which **partially signs and therefore commits them** — and sends the
+offer blob. The taker then:
+
+1. **`ada swap inspect <offer> --json`.** Always. It reports what the transaction does to your
+   balance, **derived from the transaction itself, not from the offer's description**. Read
+   `youGive`, `youReceive` and `safeToSign`.
+2. **Check `warnings`.** Anything marked `MISREPRESENTED` means the description and the transaction
+   disagree — the offer is lying about the deal. Refuse it and tell the user plainly.
+3. Show the user the figures from `inspect`, **never the ones the sender wrote**.
+4. On consent, `swap sign --yes`, then `swap submit`.
+
+`sign` independently refuses an offer that is expired, on the wrong network, unsigned by the maker,
+addressed to a different wallet, or misrepresented. Those refusals are a backstop, not a substitute
+for inspecting.
+
+Over MCP the same flow is enforced: `ada_swap_inspect` is read-only and free to call, while
+`ada_swap_build`, `ada_swap_sign` and `ada_swap_submit` each return a token you must confirm.
 
 ## Canonical flow — first session
 
@@ -175,6 +203,14 @@ Match on `code`, and prefer `hint` when it is present.
 | `mainnet_refused` | A wallet operation was attempted on mainnet | Not supported. Keys are stored unencrypted; use a test network |
 | `wallet_open_failed` | The stored phrase could not be loaded | The wallet file may be corrupt |
 | `reset_failed` | The devnet refused a reset | Check `ada localnet status --json`; the control API may be down |
+| `offer_misrepresented` | The offer's description does not match its transaction | **Refuse it.** Report exactly what the transaction does versus what was claimed |
+| `offer_expired` | The offer is past its 15-minute window | Ask the maker for a fresh one |
+| `maker_not_signed` | The maker has not signed | Do not sign first — they could take your side without giving theirs |
+| `not_the_taker` | The offer is addressed to a different wallet | Select that wallet, or refuse |
+| `network_mismatch` | Offer built for another network | Switch with `--network`, or refuse |
+| `offer_unreadable` | The transaction could not be decoded | Do not sign something you cannot read |
+| `incomplete_signatures` | Submitted before both parties signed | The taker signs first |
+| `insufficient_asset` | Not enough of a native asset | The message names the asset and the amount held |
 
 **On a devnet failure, read `logTail` before guessing.** It is included in the response precisely so
 you do not have to open a file, and it has named the cause every time so far.

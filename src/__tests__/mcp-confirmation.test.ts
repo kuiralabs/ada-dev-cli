@@ -93,10 +93,26 @@ describe('expiry', () => {
 
 describe('the tool surface is internally consistent', () => {
   it('gates every money-moving or key-deleting tool behind consent', () => {
-    // Adding a destructive tool without a consent description would let an agent
-    // execute it directly, so the two lists are checked against each other.
-    const expected = ['ada_transfer', 'ada_wallet_remove', 'ada_localnet_reset'];
-    expect([...CONSENT_TOOLS].sort()).toEqual(expected.sort());
+    // Checked as a rule rather than a fixed list, so a destructive tool added
+    // later cannot quietly skip the consent path. A tool that spends, mints,
+    // deletes a key or wipes a chain must not be directly executable by an agent.
+    // Named exactly, because a loose pattern matched ada_transfer_preview — which
+    // is read-only and must NOT be gated.
+    const spendsOrDestroys = new Set([
+      'ada_transfer', 'ada_swap_build', 'ada_swap_sign', 'ada_swap_submit',
+      'ada_asset_mint', 'ada_asset_send', 'ada_wallet_remove', 'ada_localnet_reset',
+    ]);
+    const mustHaveConsent = TOOLS.filter((t) => spendsOrDestroys.has(t.name));
+    expect(mustHaveConsent.length).toBe(spendsOrDestroys.size);
+    for (const tool of mustHaveConsent) {
+      expect(CONSENT_TOOLS.has(tool.name), `${tool.name} must require consent`).toBe(true);
+    }
+  });
+
+  it('never gates a read-only tool behind consent, which would be pointless friction', () => {
+    for (const tool of TOOLS.filter((t) => t.annotations?.readOnlyHint)) {
+      expect(CONSENT_TOOLS.has(tool.name), tool.name).toBe(false);
+    }
   });
 
   it('marks every consent tool as destructive', () => {
@@ -123,12 +139,22 @@ describe('the tool surface is internally consistent', () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it('passes --yes on every consent tool, since consent is enforced by the token', () => {
-    // The flag is what the CLI requires; the token is what the agent cannot forge.
-    // Both must be present or confirmation would fail at the command layer.
+  it('passes --yes on consent tools whose command has a confirmation guard', () => {
+    // Two layers: the CLI's --yes stops a human doing it by accident, the token
+    // stops an agent doing it without asking. Where the command has the flag, the
+    // tool must pass it or confirmation would fail at the command layer.
+    //
+    // ada_swap_submit is the exception and it is deliberate: by the time an offer
+    // is fully signed both parties have already agreed, so `swap submit` has no
+    // --yes guard. The token still gates it on the agent side.
+    const noCliGuard = new Set(['ada_swap_submit']);
     for (const name of CONSENT_TOOLS) {
-      const tool = byName(name)!;
-      expect(tool.toArgv({ to: 'addr_test1x', ada: '1', name: 'w' }), name).toContain('--yes');
+      if (noCliGuard.has(name)) continue;
+      const argv = byName(name)!.toArgv({
+        to: 'addr_test1x', ada: '1', name: 'w', qty: '1',
+        assets: ['unit:1'], offer: 'blob', counterparty: 'addr_test1y', give: '1ADA', want: '2ADA',
+      });
+      expect(argv, name).toContain('--yes');
     }
   });
 

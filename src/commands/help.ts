@@ -31,7 +31,7 @@ export const COMMANDS: CommandDoc[] = [
   // finished — an empty planned list is a claim, and it was a false one.
   { name: 'params', usage: 'ada params', summary: 'Protocol parameters — fee coefficients, min-UTxO, limits', implemented: true },
   { name: 'asset', usage: 'ada asset <policy|mint|send>', summary: 'Native assets: policy, mint, send bundles', implemented: true },
-  { name: 'swap', usage: 'ada swap <build|inspect|sign|submit>', summary: 'Two-party atomic swap', implemented: false },
+  { name: 'swap', usage: 'ada swap <build|inspect|sign|submit>', summary: 'Two-party atomic swap — no contract needed', implemented: true },
   { name: 'address', usage: 'ada address inspect <addr>', summary: 'Decode an address into its parts', implemented: true },
   { name: 'status', usage: 'ada status', summary: 'One-shot health check: chain, devnet, wallet', implemented: true },
   { name: 'localnet addresses', usage: 'ada localnet addresses', summary: 'The devnet pre-funded addresses', implemented: false },
