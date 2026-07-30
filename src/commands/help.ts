@@ -4,6 +4,7 @@ import type { Args } from '../lib/argv.ts';
 import { hasFlag } from '../lib/argv.ts';
 import { writeJson } from '../lib/json-output.ts';
 import { PKG_VERSION } from '../lib/pkg.ts';
+import { EXIT_INVALID_ARGS } from '../lib/exit-codes.ts';
 import { bold, dim } from '../ui/colors.ts';
 
 interface CommandDoc {
@@ -49,7 +50,7 @@ export default async function help(args: Args): Promise<void> {
     const doc = COMMANDS.find((c) => c.name === topic);
     if (!doc) {
       process.stderr.write(`no such command: ${topic}\n`);
-      process.exitCode = 2;
+      process.exitCode = EXIT_INVALID_ARGS;
       return;
     }
     process.stdout.write(`${bold(doc.usage)}\n  ${doc.summary}\n`);

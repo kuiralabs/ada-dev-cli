@@ -11,7 +11,11 @@
 // and is faster than starting a JVM per query.
 
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, mkdirSync, openSync, statSync, readdirSync } from 'node:fs';
+import {
+  existsSync, readFileSync, writeFileSync, unlinkSync,
+  mkdirSync, openSync, closeSync, statSync, readdirSync,
+} from 'node:fs';
+import { Socket } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,8 +28,19 @@ import { ENDPOINTS, DEVNET_READY_POLL_MS, DEVNET_READY_TIMEOUT_MS } from './cons
 const YACI_BIN = 'yaci-devkit';
 const YACI_HOME = () => join(homedir(), '.yaci-cli');
 const YACI_PID_FILE = () => join(YACI_HOME(), 'yaci-cli.pid');
-const ADA_LOG_DIR = () => join(homedir(), '.ada', 'logs');
+const ADA_DIR = () => join(homedir(), '.ada');
+const ADA_LOG_DIR = () => join(ADA_DIR(), 'logs');
 const DEVNET_LOG = () => join(ADA_LOG_DIR(), 'devnet.log');
+/** Our own record of the devnet's group leader. See devnetPid. */
+const ADA_PID_FILE = () => join(ADA_DIR(), 'devnet.pid');
+
+/** How long a SIGTERM is given to free the ports before escalating. */
+const GRACEFUL_STOP_MS = 12_000;
+/** How long a SIGKILL is given after that. */
+const FORCED_STOP_MS = 8_000;
+const STOP_POLL_MS = 400;
+/** A local port either answers immediately or is not listening. */
+const PORT_PROBE_MS = 300;
 
 /**
  * Locate the devkit launcher: an installed binary on PATH first, then this
@@ -139,8 +154,12 @@ async function downloadComponent(
     detached: true,
     stdio: ['ignore', log, log],
   });
+  // Errors surface as the polled artefact never appearing; the listener only
+  // stops an ENOENT becoming an unhandled 'error' event.
   child.on('error', () => {});
   child.unref();
+  // Our duplicate of the descriptor is not needed once the child holds one.
+  closeSync(log);
 
   const done = () =>
     component === COMPONENT_NODE ? nodeBinariesPresent() : storeComponentPresent();
@@ -205,6 +224,9 @@ export function startDevnet(opts: StartOptions = {}): number {
 
   try {
     const child = spawn(bin, args, {
+      // Detached both because the devnet must outlive this process and because it
+      // makes the child a process-group leader, which is what allows the whole
+      // tree to be signalled later. See stopDevnet.
       detached: true,
       stdio: ['ignore', log, log],
     });
@@ -218,11 +240,17 @@ export function startDevnet(opts: StartOptions = {}): number {
     if (child.pid === undefined) {
       throw new AdaError('devnet_start_failed', 'could not spawn the devkit', EXIT_INTERNAL);
     }
+    writeOwnedPid(child.pid);
     return child.pid;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (/ENOENT/.test(message)) throw notInstalled();
     throw err;
+  } finally {
+    // The child holds its own duplicate of this descriptor, so releasing ours is
+    // safe — and necessary, because a long-lived caller (the MCP server) would
+    // otherwise leak one file descriptor per invocation.
+    closeSync(log);
   }
 }
 
@@ -233,15 +261,52 @@ export function notInstalled(): AdaError {
   );
 }
 
-/** The devkit's own PID file, which is the only handle it exposes. */
+/**
+ * The devnet's controlling process.
+ *
+ * Prefers the pid we recorded when starting it, falling back to the devkit's own
+ * pid file for a devnet started outside this tool.
+ *
+ * The distinction matters: the devkit's file records *its* child, one process
+ * below the group leader we spawned. Killing that inner pid leaves the group
+ * intact, which is exactly the bug where `down` reported success while
+ * cardano-node, the submit API and the indexer kept running and holding ports.
+ * Only the pid we own can be used to signal the whole group.
+ */
 export function devnetPid(): number | undefined {
-  const file = YACI_PID_FILE();
+  return readPidFile(ADA_PID_FILE()) ?? readPidFile(YACI_PID_FILE());
+}
+
+/** True when the recorded pid is one we started, and therefore a group leader. */
+export function isOwnedPid(pid: number): boolean {
+  return readPidFile(ADA_PID_FILE()) === pid;
+}
+
+function readPidFile(file: string): number | undefined {
   if (!existsSync(file)) return undefined;
   try {
     const pid = parseInt(readFileSync(file, 'utf-8').trim(), 10);
-    return Number.isNaN(pid) ? undefined : pid;
+    return Number.isNaN(pid) || pid <= 1 ? undefined : pid;
   } catch {
     return undefined;
+  }
+}
+
+function writeOwnedPid(pid: number): void {
+  try {
+    mkdirSync(ADA_DIR(), { recursive: true });
+    writeFileSync(ADA_PID_FILE(), String(pid), 'utf-8');
+  } catch {
+    // Losing the pid file degrades `down` to the devkit's inner pid rather than
+    // breaking the start, so this is not worth failing over.
+  }
+}
+
+function clearOwnedPid(): void {
+  try {
+    if (existsSync(ADA_PID_FILE())) unlinkSync(ADA_PID_FILE());
+  } catch {
+    // best effort
   }
 }
 
@@ -337,23 +402,123 @@ export function diagnoseFailure(logLines: string[]): string | undefined {
   return undefined;
 }
 
+export interface StopResult {
+  /** True when nothing from the devnet is still listening. */
+  stopped: boolean;
+  /** Ports still held after the attempt — empty on success. */
+  portsStillHeld: readonly number[];
+  escalatedToKill: boolean;
+}
+
+/** Ports the devnet occupies, used to verify a stop actually stopped it. */
+export const DEVNET_PORTS: readonly number[] = [8080, 10000, 3001, 8090];
+
 /**
- * Stop the devnet by terminating the devkit's process tree.
+ * Stop the devnet and verify it is gone.
  *
- * The children are killed before the parent: killing the launcher first would
- * orphan the node, leaving a process holding the ports with nothing tracking it.
+ * Signals the whole **process group**, not just direct children. The previous
+ * version used `pkill -P`, which reaches one level down; the devnet's node,
+ * submit API and indexer are grandchildren, so they survived and kept holding
+ * their ports while `down` reported success. Because the launcher is spawned
+ * detached it leads its own group, so a negative pid signals every descendant at
+ * once.
+ *
+ * Escalates to SIGKILL and then reports honestly rather than assuming success —
+ * a `down` that lies is worse than one that admits it failed, because the next
+ * `up` inherits a port conflict with no explanation.
+ */
+export async function stopDevnetAndVerify(pid: number): Promise<StopResult> {
+  signalTree(pid, 'SIGTERM');
+
+  if (await portsFreeWithin(GRACEFUL_STOP_MS)) {
+    clearOwnedPid();
+    return { stopped: true, portsStillHeld: [], escalatedToKill: false };
+  }
+
+  signalTree(pid, 'SIGKILL');
+  const freed = await portsFreeWithin(FORCED_STOP_MS);
+  if (freed) clearOwnedPid();
+
+  return {
+    stopped: freed,
+    portsStillHeld: freed ? [] : await heldPorts(),
+    escalatedToKill: true,
+  };
+}
+
+/**
+ * Fire-and-forget variant for cleanup paths that cannot await — notably tearing
+ * down the component downloader.
+ *
+ * Only clears the pid record when the pid *is* the recorded one. Clearing
+ * unconditionally would erase a live devnet's record whenever a download was torn
+ * down alongside it, leaving `down` unable to signal the group.
  */
 export function stopDevnet(pid: number): void {
-  try {
-    spawn('pkill', ['-TERM', '-P', String(pid)], { stdio: 'ignore' });
-  } catch {
-    // best effort — the parent kill below is what matters
+  const owned = isOwnedPid(pid);
+  signalTree(pid, 'SIGTERM');
+  if (owned) clearOwnedPid();
+}
+
+function signalTree(pid: number, signal: NodeJS.Signals): void {
+  // Group first: this is the part that reaches grandchildren. Only valid when the
+  // pid leads a group, which is true for anything we started detached.
+  if (isOwnedPid(pid)) {
+    try {
+      process.kill(-pid, signal);
+    } catch {
+      // No such group, or already dead — the direct signal below still applies.
+    }
   }
   try {
-    process.kill(pid, 'SIGTERM');
+    process.kill(pid, signal);
   } catch {
     // already gone
   }
+}
+
+/** Devnet ports currently accepting connections. Public so commands can report
+ *  an orphaned-services state without duplicating the probe. */
+export async function devnetPortsInUse(): Promise<number[]> {
+  return heldPorts();
+}
+
+async function heldPorts(): Promise<number[]> {
+  const checks = await Promise.all(
+    DEVNET_PORTS.map(async (port) => ((await isPortListening(port)) ? port : undefined)),
+  );
+  return checks.filter((port): port is number => port !== undefined);
+}
+
+async function portsFreeWithin(timeoutMs: number): Promise<boolean> {
+  const start = Date.now();
+  for (;;) {
+    if ((await heldPorts()).length === 0) return true;
+    if (Date.now() - start >= timeoutMs) return false;
+    await sleep(STOP_POLL_MS);
+  }
+}
+
+/**
+ * Whether anything accepts a TCP connection on a local port.
+ *
+ * Uses a socket rather than shelling out to `lsof`, so it works the same in a
+ * container, needs no external binary, and cannot be defeated by a process the
+ * current user cannot see.
+ */
+function isPortListening(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new Socket();
+    const finish = (listening: boolean) => {
+      socket.destroy();
+      resolve(listening);
+    };
+    socket.setTimeout(PORT_PROBE_MS);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+    socket.connect(port, '127.0.0.1');
+  });
 }
 
 export const devnetLogPath = DEVNET_LOG;

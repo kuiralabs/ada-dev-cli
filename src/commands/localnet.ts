@@ -9,10 +9,12 @@ import { usageError } from '../lib/errors.ts';
 import { writeJson } from '../lib/json-output.ts';
 import { isReachable } from '../lib/http.ts';
 import { ENDPOINTS, DEVNET_READY_TIMEOUT_MS } from '../lib/constants.ts';
+import { EXIT_NOT_RUNNING } from '../lib/exit-codes.ts';
 import {
   startDevnet, stopDevnet, waitForDevnet, devnetPid,
   isProcessAlive, devnetLogPath, resolveYaciBin,
   devkitComponentsReady, bootstrapComponents, tailLog, diagnoseFailure,
+  stopDevnetAndVerify, devnetPortsInUse,
 } from '../lib/yaci.ts';
 import { fields, heading, ok, warn, emphasis } from '../ui/format.ts';
 
@@ -66,8 +68,24 @@ async function up(args: Args): Promise<void> {
   const stale = devnetPid();
   if (stale !== undefined && isProcessAlive(stale)) {
     if (!json) process.stdout.write(warn(`clearing a stale devkit process (pid ${stale})`) + '\n');
-    stopDevnet(stale);
-    await settle();
+    // Verified rather than fire-and-forget: an unverified stop is what left the
+    // node holding port 3001 and made the following start fail on a bind
+    // conflict.
+    const cleared = await stopDevnetAndVerify(stale);
+    if (!cleared.stopped) {
+      return fail(json, 'stale_process_stuck',
+        'could not free the ports held by a previous devnet',
+        `still held: ${cleared.portsStillHeld.join(', ')}`);
+    }
+  }
+
+  // Orphaned services with no controller: the same bind conflict, arrived at from
+  // the other direction.
+  const orphanPorts = await devnetPortsInUse();
+  if (orphanPorts.length > 0) {
+    return fail(json, 'ports_in_use',
+      `ports already in use: ${orphanPorts.join(', ')}`,
+      'a previous devnet left services running — run: ada localnet down');
   }
 
   if (!devkitComponentsReady()) {
@@ -122,7 +140,7 @@ async function up(args: Args): Promise<void> {
       // its own cause in the last few lines.
       for (const line of logLines.slice(-6)) process.stdout.write(`    ${line}\n`);
     }
-    process.exitCode = 4;
+    process.exitCode = EXIT_NOT_RUNNING;
     return;
   }
 
@@ -159,7 +177,7 @@ function fail(json: boolean, reason: string, message: string, hint: string): voi
     process.stdout.write(warn(message) + '\n');
     process.stdout.write(`  ${hint}\n`);
   }
-  process.exitCode = 4;
+  process.exitCode = EXIT_NOT_RUNNING;
 }
 
 /** Brief pause so a terminated process actually releases its ports before the
@@ -170,22 +188,51 @@ async function down(args: Args): Promise<void> {
   const json = hasFlag(args, 'json');
   const pid = devnetPid();
 
+  // "Not running" must mean no ports held, not just no controlling process. A
+  // dead controller with a live node is the state that made the next `up` fail on
+  // a bind conflict, so it has to be reported as still running.
   if (pid === undefined || !isProcessAlive(pid)) {
-    if (json) {
-      writeJson({ ok: true, status: 'not_running' });
-    } else {
-      process.stdout.write(ok('devnet is not running') + '\n');
+    const held = await devnetPortsInUse();
+    if (held.length === 0) {
+      if (json) writeJson({ ok: true, status: 'not_running' });
+      else process.stdout.write(ok('devnet is not running') + '\n');
+      return;
     }
+    const message = 'the devnet controller is gone but its services are still listening';
+    const hint = `ports still held: ${held.join(', ')} — they must be freed before the next start`;
+    if (json) writeJson({ ok: false, reason: 'orphaned_services', message, hint, portsHeld: held });
+    else {
+      process.stdout.write(warn(message) + '\n');
+      process.stdout.write(`  ${hint}\n`);
+    }
+    process.exitCode = EXIT_NOT_RUNNING;
     return;
   }
 
-  stopDevnet(pid);
+  const result = await stopDevnetAndVerify(pid);
+
+  if (!result.stopped) {
+    const message = 'stop did not free every port';
+    const hint = `still held: ${result.portsStillHeld.join(', ')}`;
+    if (json) {
+      writeJson({
+        ok: false, reason: 'stop_incomplete', message, hint,
+        pid, portsHeld: result.portsStillHeld, escalatedToKill: result.escalatedToKill,
+      });
+    } else {
+      process.stdout.write(warn(message) + '\n');
+      process.stdout.write(`  ${hint}\n`);
+    }
+    process.exitCode = EXIT_NOT_RUNNING;
+    return;
+  }
 
   if (json) {
-    writeJson({ ok: true, status: 'stopped', pid });
+    writeJson({ ok: true, status: 'stopped', pid, escalatedToKill: result.escalatedToKill });
     return;
   }
-  process.stdout.write(ok(`stopped devnet (pid ${pid})`) + '\n');
+  const suffix = result.escalatedToKill ? ' (required SIGKILL)' : '';
+  process.stdout.write(ok(`stopped devnet and all services (pid ${pid})${suffix}`) + '\n');
 }
 
 async function status(args: Args): Promise<void> {

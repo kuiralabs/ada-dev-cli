@@ -3,10 +3,13 @@
 
 import type { Args } from '../lib/argv.ts';
 import { hasFlag } from '../lib/argv.ts';
-import { loadConfig, saveConfig, configPath, assertNetworkName, type AdaConfig } from '../lib/cli-config.ts';
+import {
+  loadConfig, loadConfigState, saveConfig, configPath, invalidConfigPath,
+  assertNetworkName, type AdaConfig,
+} from '../lib/cli-config.ts';
 import { usageError } from '../lib/errors.ts';
 import { writeJson } from '../lib/json-output.ts';
-import { fields, heading, ok } from '../ui/format.ts';
+import { fields, heading, ok, warn } from '../ui/format.ts';
 
 export default async function config(args: Args): Promise<void> {
   const [action, key, value] = args.positionals;
@@ -21,10 +24,16 @@ export default async function config(args: Args): Promise<void> {
 }
 
 function list(json: boolean): void {
-  const cfg = loadConfig();
+  const { config: cfg, status } = loadConfigState();
   if (json) {
-    writeJson({ ok: true, config: cfg, configPath: configPath() });
+    writeJson({ ok: true, config: cfg, status, configPath: configPath() });
     return;
+  }
+  if (status === 'corrupt') {
+    process.stdout.write(
+      warn(`${configPath()} is not valid JSON — showing defaults`) + '\n' +
+      `  it will be preserved as ${invalidConfigPath()} on the next write\n`,
+    );
   }
   process.stdout.write(heading('Config') + '\n');
   process.stdout.write(
