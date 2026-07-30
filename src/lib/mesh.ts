@@ -128,6 +128,82 @@ export function makeTxBuilder(provider: Provider, opts: TxBuilderOptions = {}): 
   });
 }
 
+export interface ChainTip {
+  height: number | null;
+  slot: number | null;
+  epoch: number | null;
+  hash: string;
+  time: number;
+  txCount: number | null;
+}
+
+/**
+ * The chain tip, through the provider rather than a raw HTTP call.
+ *
+ * There must be exactly one path to a public network, and it is the provider —
+ * because the provider is the thing that holds the API key. An earlier version
+ * fetched the tip over plain HTTP, which worked on the devnet and returned
+ * Blockfrost's HTML error page on preprod, surfacing as "Unexpected token '<'".
+ *
+ * Raw HTTP remains correct for devnet *lifecycle* probes (readiness, port checks):
+ * those talk to localhost, need no credentials, and must not require building a
+ * provider to answer "is it up yet".
+ */
+export async function fetchTip(provider: Provider): Promise<ChainTip> {
+  const block = (await provider.get('blocks/latest')) as Record<string, unknown>;
+  return {
+    height: numberOrNull(block.height),
+    slot: numberOrNull(block.slot),
+    epoch: numberOrNull(block.epoch),
+    hash: String(block.hash ?? ''),
+    time: numberOrNull(block.time) ?? 0,
+    txCount: numberOrNull(block.tx_count),
+  };
+}
+
+const numberOrNull = (v: unknown): number | null =>
+  typeof v === 'number' ? v : v === null || v === undefined ? null : Number(v);
+
+/**
+ * Messages Mesh emits that carry no information for a caller of this tool.
+ *
+ * The devnet provider does not implement `fetchCostModels`, so Mesh logs a stack
+ * trace and falls back to defaults on every build. The fallback is correct —
+ * `setNetwork()` has already supplied cost models — but a stack trace on every
+ * transfer is noise, and noise on a money path teaches people to ignore stderr.
+ */
+const SUPPRESSED_PROVIDER_WARNINGS = [
+  'Failed to fetch cost models',
+  'fetchCostModels returned an invalid value',
+];
+
+/**
+ * Run a build without Mesh's cost-model chatter.
+ *
+ * Both `console.warn` and `console.error` are filtered: Node routes **warn to
+ * stderr as well**, and the first version of this patched only `error` and
+ * therefore suppressed nothing. Only the messages listed above are dropped —
+ * anything else Mesh says still reaches stderr.
+ */
+export async function withoutCostModelNoise<T>(run: () => Promise<T>): Promise<T> {
+  const isSuppressed = (parts: unknown[]): boolean =>
+    typeof parts[0] === 'string' && SUPPRESSED_PROVIDER_WARNINGS.some((m) => (parts[0] as string).includes(m));
+
+  const originalWarn = console.warn;
+  const originalError = console.error;
+  console.warn = (...parts: unknown[]) => { if (!isSuppressed(parts)) originalWarn(...(parts as [])); };
+  console.error = (...parts: unknown[]) => { if (!isSuppressed(parts)) originalError(...(parts as [])); };
+
+  try {
+    return await run();
+  } finally {
+    // Restored in a finally so a thrown build cannot leave the console patched for
+    // the rest of the process.
+    console.warn = originalWarn;
+    console.error = originalError;
+  }
+}
+
 /** Payment and stake address for a wallet, as a pair, because a Cardano wallet has
  *  both and confusing them produces confident nonsense. */
 export async function addressesOf(wallet: MeshWallet): Promise<{ payment: string; stake: string }> {

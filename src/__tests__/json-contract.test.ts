@@ -153,3 +153,36 @@ describe('help scopes to a topic in json mode', () => {
     expect(Array.isArray(one().commands)).toBe(true);
   });
 });
+
+describe('provider chatter does not leak onto stderr', () => {
+  // Mesh logs a cost-model stack trace on every build against the devnet. Node
+  // routes console.warn to stderr, and the first fix patched only console.error —
+  // so it suppressed nothing. This pins both.
+  it('suppresses the cost-model warning from warn and error alike', async () => {
+    const { withoutCostModelNoise } = await import('../lib/mesh.ts');
+    const seen: string[] = [];
+    const realWarn = console.warn;
+    const realError = console.error;
+    console.warn = (...p: unknown[]) => { seen.push(`warn:${String(p[0])}`); };
+    console.error = (...p: unknown[]) => { seen.push(`error:${String(p[0])}`); };
+    try {
+      await withoutCostModelNoise(async () => {
+        console.warn('Failed to fetch cost models, using default cost models. Error: ', new Error('x'));
+        console.error('Failed to fetch cost models, using default cost models. Error: ', new Error('x'));
+        console.warn('something else entirely');
+      });
+    } finally {
+      console.warn = realWarn;
+      console.error = realError;
+    }
+    expect(seen).toEqual(['warn:something else entirely']);
+  });
+
+  it('restores the console even when the wrapped work throws', async () => {
+    const { withoutCostModelNoise } = await import('../lib/mesh.ts');
+    const before = console.warn;
+    await expect(withoutCostModelNoise(async () => { throw new Error('boom'); })).rejects.toThrow('boom');
+    // A patched console surviving a failure would silence the rest of the process.
+    expect(console.warn).toBe(before);
+  });
+});

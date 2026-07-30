@@ -26,6 +26,15 @@ export const COMMANDS: CommandDoc[] = [
   { name: 'utxos', usage: 'ada utxos [wallet|address]', summary: 'Unspent outputs behind a balance', implemented: true },
   { name: 'airdrop', usage: 'ada airdrop <ada> [--address <addr>]', summary: 'Fund from the devnet faucet', implemented: true },
   { name: 'transfer', usage: 'ada transfer <to> <ada> [--yes]', summary: 'Send ADA — dry run without --yes', implemented: true },
+  // Designed in docs/COMMANDS.md and not yet built. Listed so an agent reading
+  // this surface learns what is coming instead of concluding the tool is
+  // finished — an empty planned list is a claim, and it was a false one.
+  { name: 'params', usage: 'ada params', summary: 'Protocol parameters — fee coefficients, min-UTxO, limits', implemented: false },
+  { name: 'asset', usage: 'ada asset <mint|send>', summary: 'Native assets and bundles', implemented: false },
+  { name: 'swap', usage: 'ada swap <build|inspect|sign|submit>', summary: 'Two-party atomic swap', implemented: false },
+  { name: 'address', usage: 'ada address <derive|inspect>', summary: 'Derive or decode an address', implemented: false },
+  { name: 'status', usage: 'ada status', summary: 'Overall health of the configured network', implemented: false },
+  { name: 'manual', usage: 'ada manual', summary: 'Full reference — every command, every flag', implemented: false },
 ];
 
 const GLOBAL_FLAGS: Array<[string, string]> = [

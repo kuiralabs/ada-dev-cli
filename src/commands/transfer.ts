@@ -16,7 +16,7 @@ import { writeJson } from '../lib/json-output.ts';
 import { usageError, AdaError } from '../lib/errors.ts';
 import { EXIT_CHAIN_REJECTED } from '../lib/exit-codes.ts';
 import { openActive } from '../lib/active-wallet.ts';
-import { makeTxBuilder, meshNetworkName } from '../lib/mesh.ts';
+import { makeTxBuilder, meshNetworkName, withoutCostModelNoise } from '../lib/mesh.ts';
 import {
   adaToLovelace, parseLovelace, lovelaceToAda, formatAda, sumLovelace, LOVELACE_UNIT,
 } from '../lib/amount.ts';
@@ -76,7 +76,7 @@ export default async function transfer(args: Args): Promise<void> {
 
   let unsignedTx: string;
   try {
-    unsignedTx = await builder.complete();
+    unsignedTx = await withoutCostModelNoise(() => builder.complete());
   } catch (err) {
     throw translateBuildFailure(err, amount, available);
   }
