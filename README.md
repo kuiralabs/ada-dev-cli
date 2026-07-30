@@ -7,9 +7,9 @@ Built for two audiences: **developers** starting a Cardano project who want a fu
 local chain in under five minutes, and **AI agents** (Claude Code, Cursor, any MCP client) using
 the same primitives through a built-in MCP server.
 
-> **Status: pre-implementation.** The command surface below is designed and the stack is chosen;
-> the code is not written yet. Nothing is published to npm. See `docs/COMMANDS.md` for the full
-> surface and `tasks/todo.md` for build order.
+> **Status: early.** The devnet and chain-query commands work — `localnet`, `tip`, `info`,
+> `config`. Wallets, transfers, assets and swaps are next. Nothing is published to npm yet.
+> See `docs/COMMANDS.md` for the designed surface and `tasks/todo.md` for progress.
 
 ## Why this exists
 
@@ -49,8 +49,12 @@ atomic swaps, and a single agent-callable surface over the lot.
 | `ada localnet up/stop/down/status/logs/reset` | Manage a local devnet via Docker |
 | `ada localnet snapshot/rollback` | Rollback testing against a forked chain |
 | `ada config get/set/unset` | Persistent config — network, active wallet, endpoints |
+| `ada localnet bootstrap` | Download devkit components without starting anything |
 | `ada help [command]` | Usage for all or one command |
 | `ada manual` | Full reference — every command, every flag |
+
+Working today: `localnet`, `tip`, `info`, `config`, `help`. Run `ada help` for the current list —
+it marks which commands are implemented.
 
 Installing will provide two binaries: `ada` and `ada-mcp`.
 

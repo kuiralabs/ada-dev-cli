@@ -1,0 +1,49 @@
+{
+  "name": "ada-wallet-cli",
+  "version": "0.0.1",
+  "description": "Cardano CLI wallet — wallets, balances, transfers, native assets, atomic swaps and a local devnet from one command surface.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "nel349",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kuiralabs/ada-wallet-cli.git"
+  },
+  "homepage": "https://github.com/kuiralabs/ada-wallet-cli#readme",
+  "bugs": {
+    "url": "https://github.com/kuiralabs/ada-wallet-cli/issues"
+  },
+  "keywords": [
+    "cardano",
+    "cli",
+    "wallet",
+    "devnet",
+    "mcp",
+    "ada"
+  ],
+  "bin": {
+    "ada": "dist/ada.js",
+    "ada-wallet-cli": "dist/ada.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "ada": "tsx src/ada.ts",
+    "build": "bun build src/ada.ts --outfile dist/ada.js --target node --format esm --packages external --banner \"#!/usr/bin/env node\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "@bloxbean/yaci-devkit": "^0.10.6",
+    "@types/node": "^22.19.13",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

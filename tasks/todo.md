@@ -3,14 +3,21 @@
 Ordered so each step produces something usable rather than a layer waiting on the next one. The
 first four steps are the loop everything else gets debugged inside.
 
-## 1 · Walking skeleton
+## 1 · Walking skeleton — DONE
 
-- [ ] Scaffold: TypeScript, npm workspaces, `ada` + `ada-mcp` binaries, Apache-2.0
-- [ ] Config store with an active-wallet concept
-- [ ] `localnet up/down/status` wrapping Yaci DevKit
-- [ ] `tip` and `info` — proves the chain connection end to end
+- [x] Scaffold: TypeScript, `ada` binary, Apache-2.0, typecheck + vitest + bundle
+- [x] Config store with an active-wallet concept, atomic writes, flag overrides
+- [x] Error taxonomy with stable reasons and exit codes
+- [x] `localnet up/down/status/logs/bootstrap` wrapping Yaci DevKit
+- [x] `tip`, `info`, `config`, `help`
+- [x] Offline tests (22) including a fails-before/passes-after readiness regression
 
-**Done when:** a local chain starts and reports its tip.
+**Done:** devnet starts in ~9s and reports an advancing tip. See `docs/DEVNET.md` for the
+devkit behaviour this uncovered — two distinct APIs, and an indexer that ships separately and
+is disabled by default.
+
+`ada-mcp` moved to stage 3, where it is written against the real command surface rather than
+ahead of it.
 
 ## 2 · Wallets and money
 
