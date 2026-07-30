@@ -29,7 +29,14 @@ export interface ActiveContext {
 export async function openActive(args: Args, explicitName?: string): Promise<ActiveContext> {
   const config = loadConfig();
   const network = resolveNetwork(config, flagValue(args, 'network'));
-  const name = explicitName ?? config.activeWallet;
+  // Precedence: a positional argument, then --wallet, then the active wallet.
+  //
+  // --wallet is read here rather than per command because review found `balance`
+  // and `utxos` ignoring it entirely: `balance --wallet bob` reported alice's
+  // balance with ok:true, and `--wallet ghost` did the same instead of failing.
+  // A flag that silently selects the wrong account is worse than one that does
+  // not exist.
+  const name = explicitName ?? flagValue(args, 'wallet') ?? config.activeWallet;
   if (!name) {
     throw configError(
       'no wallet selected',

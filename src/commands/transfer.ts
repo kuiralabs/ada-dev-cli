@@ -13,9 +13,11 @@
 import type { Args } from '../lib/argv.ts';
 import { hasFlag, flagValue } from '../lib/argv.ts';
 import { writeJson } from '../lib/json-output.ts';
-import { usageError, AdaError } from '../lib/errors.ts';
-import { EXIT_CHAIN_REJECTED } from '../lib/exit-codes.ts';
+import { usageError } from '../lib/errors.ts';
 import { openActive } from '../lib/active-wallet.ts';
+import {
+  noUtxosError, signAndSubmit, translateBuildFailure, assertMeetsMinValue,
+} from '../lib/tx-common.ts';
 import { makeTxBuilder, meshNetworkName, withoutCostModelNoise } from '../lib/mesh.ts';
 import {
   adaToLovelace, parseLovelace, lovelaceToAda, formatAda, sumLovelace, LOVELACE_UNIT,
@@ -56,20 +58,20 @@ export default async function transfer(args: Args): Promise<void> {
   }
 
   const utxos = await ctx.wallet.getUtxos();
-  if (utxos.length === 0) {
-    throw new AdaError(
-      'no_utxos',
-      `wallet ${ctx.stored.name} has no unspent outputs to spend`,
-      EXIT_CHAIN_REJECTED,
-      'fund it with: ada airdrop 1000',
-    );
-  }
+  if (utxos.length === 0) throw noUtxosError(ctx.stored.name);
 
   const available = sumLovelace(utxos.flatMap((u) => u.output.amount));
 
+  // Checked before building. The builder accepts a sub-minimum output and the
+  // chain then refuses it, so without this the dry run reports success for a
+  // transaction that cannot be submitted — which defeats its only purpose.
+  const params = await ctx.provider.fetchProtocolParameters();
+  const outputAmount = [{ unit: LOVELACE_UNIT, quantity: amount.toString() }];
+  assertMeetsMinValue(to, outputAmount, params.coinsPerUtxoSize);
+
   const builder = makeTxBuilder(ctx.provider);
   builder
-    .txOut(to, [{ unit: LOVELACE_UNIT, quantity: amount.toString() }])
+    .txOut(to, outputAmount)
     .changeAddress(ctx.payment)
     .selectUtxosFrom(utxos)
     .setNetwork(meshNetworkName(ctx.network.name));
@@ -78,7 +80,11 @@ export default async function transfer(args: Args): Promise<void> {
   try {
     unsignedTx = await withoutCostModelNoise(() => builder.complete());
   } catch (err) {
-    throw translateBuildFailure(err, amount, available);
+    throw translateBuildFailure(err, {
+      what: 'transfer',
+      detail: `cannot cover ${lovelaceToAda(amount)} ADA plus fees from `
+        + `${lovelaceToAda(available)} ADA available`,
+    });
   }
 
   const fee = builder.getActualFee();
@@ -129,19 +135,7 @@ export default async function transfer(args: Args): Promise<void> {
     return;
   }
 
-  let txHash: string;
-  try {
-    const signedTx = await ctx.wallet.signTx(unsignedTx);
-    txHash = await ctx.wallet.submitTx(signedTx);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new AdaError(
-      'submit_failed',
-      `the chain rejected the transaction: ${message}`,
-      EXIT_CHAIN_REJECTED,
-      'the fee and inputs were valid at build time — the chain state may have moved',
-    );
-  }
+  const txHash = await signAndSubmit(ctx, unsignedTx);
 
   if (json) {
     writeJson({
@@ -188,38 +182,3 @@ function printPlan(
   process.stdout.write(dim('  fees on Cardano are a function of size, so this figure is exact\n'));
 }
 
-/**
- * Turn a builder failure into something actionable.
- *
- * The two that actually happen are not having enough to cover amount-plus-fee, and
- * an output falling under the minimum-value rule. Both are reported by the builder
- * as prose, so they are matched here once rather than left to surface as a wall of
- * library text.
- */
-function translateBuildFailure(err: unknown, amount: bigint, available: bigint): AdaError {
-  const message = err instanceof Error ? err.message : String(err);
-
-  if (/insufficient|not enough|UTxO Balance Insufficient/i.test(message)) {
-    return new AdaError(
-      'insufficient_funds',
-      `cannot cover ${lovelaceToAda(amount)} ADA plus fees from ${lovelaceToAda(available)} ADA available`,
-      EXIT_CHAIN_REJECTED,
-      'fund the wallet with: ada airdrop 1000',
-    );
-  }
-
-  if (/minimum|min.?ada|min.?utxo|too small/i.test(message)) {
-    return new AdaError(
-      'output_below_min_value',
-      `the output is below the minimum value the ledger allows: ${message}`,
-      EXIT_CHAIN_REJECTED,
-      'every output must hold a minimum amount of ADA proportional to its size — send more',
-    );
-  }
-
-  return new AdaError(
-    'build_failed',
-    `could not build the transaction: ${message}`,
-    EXIT_CHAIN_REJECTED,
-  );
-}

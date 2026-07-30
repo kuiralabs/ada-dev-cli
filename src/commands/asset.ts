@@ -17,6 +17,7 @@ import { writeJson } from '../lib/json-output.ts';
 import { usageError, AdaError } from '../lib/errors.ts';
 import { EXIT_CHAIN_REJECTED } from '../lib/exit-codes.ts';
 import { openActive } from '../lib/active-wallet.ts';
+import { noUtxosError, signAndSubmit, translateBuildFailure } from '../lib/tx-common.ts';
 import { makeTxBuilder, meshNetworkName, withoutCostModelNoise } from '../lib/mesh.ts';
 import { lovelaceToAda, formatAda, sumLovelace, LOVELACE_UNIT } from '../lib/amount.ts';
 import { fields, heading, ok, warn, emphasis } from '../ui/format.ts';
@@ -99,10 +100,7 @@ async function mint(args: Args): Promise<void> {
   const unit = `${policyId}${assetNameHex}`;
 
   const utxos = await ctx.wallet.getUtxos();
-  if (utxos.length === 0) {
-    throw new AdaError('no_utxos', `wallet ${ctx.stored.name} has nothing to pay the fee with`,
-      EXIT_CHAIN_REJECTED, 'fund it with: ada airdrop 1000');
-  }
+  if (utxos.length === 0) throw noUtxosError(ctx.stored.name);
 
   const builder = makeTxBuilder(ctx.provider);
   builder
@@ -122,7 +120,7 @@ async function mint(args: Args): Promise<void> {
   try {
     unsignedTx = await withoutCostModelNoise(() => builder.complete());
   } catch (err) {
-    throw translateFailure(err, 'mint');
+    throw translateBuildFailure(err, { what: 'mint' });
   }
   const fee = builder.getActualFee();
 
@@ -178,10 +176,7 @@ async function send(args: Args): Promise<void> {
 
   const ctx = await openActive(args, flagValue(args, 'wallet'));
   const utxos = await ctx.wallet.getUtxos();
-  if (utxos.length === 0) {
-    throw new AdaError('no_utxos', `wallet ${ctx.stored.name} has no unspent outputs`,
-      EXIT_CHAIN_REJECTED, 'fund it with: ada airdrop 1000');
-  }
+  if (utxos.length === 0) throw noUtxosError(ctx.stored.name);
 
   const held = new Map<string, bigint>();
   for (const u of utxos) {
@@ -214,7 +209,10 @@ async function send(args: Args): Promise<void> {
   try {
     unsignedTx = await withoutCostModelNoise(() => builder.complete());
   } catch (err) {
-    throw translateFailure(err, 'send');
+    throw translateBuildFailure(err, {
+      what: 'asset transfer',
+      minValueHint: 'an output carrying assets needs more ADA attached than a plain one',
+    });
   }
   const fee = builder.getActualFee();
   const attachedAda = sumLovelace(
@@ -260,19 +258,6 @@ async function send(args: Args): Promise<void> {
   }
   process.stdout.write(ok(`sent ${bundle.length} asset(s) to ${to.slice(0, 24)}…`) + '\n');
   process.stdout.write(fields([['tx', txHash], ['fee', formatAda(fee)]]) + '\n');
-}
-
-async function signAndSubmit(
-  ctx: Awaited<ReturnType<typeof openActive>>,
-  unsignedTx: string,
-): Promise<string> {
-  try {
-    return await ctx.wallet.submitTx(await ctx.wallet.signTx(unsignedTx));
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new AdaError('submit_failed', `the chain rejected the transaction: ${message}`,
-      EXIT_CHAIN_REJECTED, 'chain state may have moved since the transaction was built');
-  }
 }
 
 function printMintPlan(
@@ -325,17 +310,3 @@ export function assertAssetName(name: string): void {
   }
 }
 
-function translateFailure(err: unknown, what: string): AdaError {
-  const message = err instanceof Error ? err.message : String(err);
-  if (/insufficient|not enough|UTxO Balance Insufficient/i.test(message)) {
-    return new AdaError('insufficient_funds', `not enough ADA to cover the ${what} and its fee`,
-      EXIT_CHAIN_REJECTED, 'fund the wallet with: ada airdrop 1000');
-  }
-  if (/minimum|min.?ada|min.?utxo|too small/i.test(message)) {
-    return new AdaError('output_below_min_value',
-      `the output is below the ledger's minimum value: ${message}`,
-      EXIT_CHAIN_REJECTED,
-      'an output carrying assets needs more ADA attached than a plain one');
-  }
-  return new AdaError('build_failed', `could not build the ${what}: ${message}`, EXIT_CHAIN_REJECTED);
-}

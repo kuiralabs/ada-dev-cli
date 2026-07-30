@@ -21,7 +21,7 @@ counterpart, reason given) · **open** (needs a decision)
 
 | | State |
 |---|---|
-| Shipped | 14 commands · 18 MCP tools · 129 offline tests |
+| Shipped | 14 commands · 18 MCP tools · 140 offline tests |
 | Verified live | devnet end to end; **preprod reads with no API key and no setup** |
 | Building now | **swap** — the differentiator |
 | Left after that | `manual`, `cache clear`, `localnet snapshot/rollback`, `test`, publish |

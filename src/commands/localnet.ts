@@ -10,8 +10,11 @@ import { writeJson, writeJsonError } from '../lib/json-output.ts';
 import { isReachable } from '../lib/http.ts';
 import { ENDPOINTS, DEVKIT_ENDPOINTS, DEVNET_READY_TIMEOUT_MS } from '../lib/constants.ts';
 import { EXIT_NOT_RUNNING } from '../lib/exit-codes.ts';
+
+/** A ~1.4GB download over a slow connection needs a generous ceiling. */
+const COMPONENT_DOWNLOAD_TIMEOUT_MS = 900_000;
 import {
-  startDevnet, stopDevnet, waitForDevnet, devnetPid,
+  startDevnet, waitForDevnet, devnetPid,
   isProcessAlive, devnetLogPath, resolveYaciBin,
   devkitComponentsReady, bootstrapComponents, tailLog, diagnoseFailure,
   stopDevnetAndVerify, devnetPortsInUse,
@@ -93,7 +96,7 @@ async function up(args: Args): Promise<void> {
     if (!json) {
       process.stdout.write('devkit components missing — downloading once (about 1.4GB total)...\n');
     }
-    const got = await bootstrapComponents(900_000, (_waited, what) => {
+    const got = await bootstrapComponents(COMPONENT_DOWNLOAD_TIMEOUT_MS, (_waited, what) => {
       if (!json) process.stdout.write(`  fetching ${what}...\n`);
     });
     if (!got) {
@@ -211,7 +214,7 @@ async function bootstrap(args: Args): Promise<void> {
     return;
   }
   if (!json) process.stdout.write('downloading devkit components (about 1.4GB, one time)...\n');
-  const got = await bootstrapComponents(900_000, (_waited, what) => {
+  const got = await bootstrapComponents(COMPONENT_DOWNLOAD_TIMEOUT_MS, (_waited, what) => {
     if (!json) process.stdout.write(`  fetching ${what}...\n`);
   });
   if (!got) {

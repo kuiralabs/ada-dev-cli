@@ -98,6 +98,7 @@ Never pass a boolean flag a value. `--json` and `--help` take none; `ada localne
 | "delete wallet alice" | `ada wallet remove alice --yes --json` — ask consent first |
 | "what's my balance?" | `ada balance --json` |
 | "balance of addr_test1..." | `ada balance addr_test1... --json` |
+| "balance of wallet bob" | `ada balance bob --json` or `ada balance --wallet bob --json` |
 | "show my UTxOs" / "why is my balance that?" | `ada utxos --json` |
 | "fund my wallet" (devnet only) | `ada airdrop 1000 --json` |
 | "what would it cost to send 10 ADA?" | `ada transfer <addr> 10 --json` — **no `--yes`, so nothing is sent** |
@@ -168,7 +169,7 @@ Match on `code`, and prefer `hint` when it is present.
 | `unknown_command` | No such command | `ada help --json` for the real list |
 | `no_utxos` | The wallet holds nothing to spend | `ada airdrop 1000 --json` on devnet |
 | `insufficient_funds` | Cannot cover the amount plus the fee | The message states available versus needed. Fund it or send less |
-| `output_below_min_value` | An output is under the ledger's minimum | Send more. Every output must hold a minimum proportional to its size |
+| `output_below_min_value` | An output is under the ledger's minimum | The message names the exact floor. Send at least that. An output carrying assets needs more than a plain one |
 | `build_failed` | The transaction could not be constructed | Read the message; it carries the builder's reason |
 | `submit_failed` | The chain rejected it after signing | Chain state moved between build and submit. Retry once |
 | `mainnet_refused` | A wallet operation was attempted on mainnet | Not supported. Keys are stored unencrypted; use a test network |
