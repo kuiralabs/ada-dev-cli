@@ -24,7 +24,7 @@ counterpart, reason given) · **open** (needs a decision)
 | Shipped | 16 commands · 25 MCP tools · 187 offline tests |
 | Verified live | devnet end to end; **preprod reads with no API key and no setup** |
 | Building now | nothing — **every stage except publish is closed** |
-| Left | **publish only**, and it waits on the author's word |
+| Left | **publish only** — deliberately held until the tool has been used in anger |
 | Not applicable | `cache clear` — there is no cache to clear |
 | Blocked by the devkit | `localnet snapshot/rollback` — interactive-shell only |
 | Declined | `serve`, `dev`, `contract`, `test` — reasoning below |
@@ -229,9 +229,25 @@ Adversarial cases, each verified to fail safely: replay of a spent swap, the mak
 wrong network, expired offer, unsigned by the maker, garbage input, unknown version, and a
 misrepresented description.
 
-**7 · Publish — the only stage left, and it waits on the author's word.** npm as
-`ada-wallet-cli`, `docs/PUBLISHING.md`, a demo, and the Cardano developer portal's Builder Tools
-submission (tracked in the private planning repo).
+**7 · Publish — held until the tool has been used in anger.**
+
+Feature-complete is not the same as battle-tested, and this codebase makes the case unusually
+clearly. Every defect that mattered was found by *driving* the tool, not by running its tests:
+seven MCP tools routing to commands that could not be loaded, a `--wallet` flag that silently
+returned the wrong account, a dry run that approved a transaction the chain refused, an offer format
+that let a sender lie about the deal, and a `status` command that called a chain healthy while it
+had produced no blocks for nine hours. The suite was green throughout all of it.
+
+The remedy is the job the tool was built for. It exists to make another implementation debuggable —
+so publishing waits until it has actually done that, at which point the next tier of defects will
+have surfaced the same way this one did.
+
+**A defensible bar:** publish once it has carried a real money path end to end for something other
+than itself. Reading a balance exercises very little; building, signing and submitting a transaction
+while comparing against an independent implementation exercises nearly everything.
+
+npm as `ada-wallet-cli`, `docs/PUBLISHING.md`, a demo, and a Builder Tools submission to the Cardano
+developer portal all follow that, not the other way round.
 
 ---
 
