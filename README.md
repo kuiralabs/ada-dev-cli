@@ -14,14 +14,18 @@ the same primitives through a built-in MCP server.
 
 ## Why this exists
 
-Cardano has excellent tooling, but it is spread across four projects with four interfaces: a
-devnet manager, a node CLI that is not a wallet, a separate address tool, and a wallet daemon.
-Getting from nothing to "I sent a transaction and can see why it failed" means learning all of
-them.
+Doing anything on Cardano takes four separate things: a chain to talk to, a way to ask it
+questions, somewhere to keep keys, and a way to build transactions. Each is a different project
+with its own interface, and each is good at its job — but getting from nothing to *"I sent a
+transaction and I can see why it failed"* means learning all four first.
 
-This is one umbrella over the good parts. It does not reimplement them — it composes them, and
-adds the pieces nobody ships: transfers between arbitrary addresses, native-asset bundles,
-atomic swaps, and a single agent-callable surface over the lot.
+This is one interface over them. It composes rather than reimplements, and fills the gaps nobody
+covers: transfers between arbitrary addresses, native-asset bundles, atomic swaps, and a single
+agent-callable surface across the lot.
+
+**`docs/STACK.md` is the map** — what each project in the stack is, what it is for, and which of
+the two APIs a local chain serves answers which kind of question. Worth ten minutes before writing
+any Cardano code, whether or not you use this tool.
 
 ## Planned commands
 
