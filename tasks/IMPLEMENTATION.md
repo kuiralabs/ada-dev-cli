@@ -21,14 +21,15 @@ counterpart, reason given) · **open** (needs a decision)
 
 | | State |
 |---|---|
-| Shipped | 15 commands · 25 MCP tools · 155 offline tests |
+| Shipped | 16 commands · 25 MCP tools · 186 offline tests |
 | Verified live | devnet end to end; **preprod reads with no API key and no setup** |
-| Building now | publishing prep. Every feature stage is complete |
-| Left after that | `manual`, `cache clear`, `localnet snapshot/rollback`, `test`, publish |
-| Feature surfaces | every command has an MCP tool except `config`, `info` and `manual` — deliberate, see below |
+| Building now | nothing — **every stage except publish is closed** |
+| Left | **publish only**, and it waits on the author's word |
+| Not applicable | `cache clear` — there is no cache to clear |
+| Blocked by the devkit | `localnet snapshot/rollback` — interactive-shell only |
+| Declined | `serve`, `dev`, `contract`, `test` — reasoning below |
 | Blocked, not deferred | `localnet addresses` (no machine-readable source) · `address derive` (needs the `cardano-address` binary) |
 | No counterpart in `mn` | `dust register`, `dust status` — Cardano pays fees in ADA, so the category does not exist |
-| Needs a decision | `serve`, `dev`, `contract` |
 
 ---
 
@@ -49,7 +50,7 @@ counterpart, reason given) · **open** (needs a decision)
 | `genesis-address` | `localnet addresses` — **blocked**: the devkit exposes the 20 addresses only through its interactive shell, and `cluster-info.json` does not carry them |
 | `inspect-cost` | `params` — fee coefficients, min-UTxO, limits | **done** |
 | `config get/set/unset` | `config get/set/unset/list` | **done** |
-| `cache clear` | `cache clear` | planned · stage 4 |
+| `cache clear` | — | **none** (nothing is cached) |
 | `localnet up` | `localnet up` | **done** |
 | `localnet stop` | `localnet stop` | **done** |
 | `localnet down` | `localnet down` | **done** |
@@ -58,13 +59,13 @@ counterpart, reason given) · **open** (needs a decision)
 | `localnet clean` | `localnet reset` — one control-API call, `--yes` required | **done** |
 | `status` | `status` — chain, devnet and wallet in one call | **done** |
 | `help` | `help` — marks which commands are implemented | **done** |
-| `manual` | `manual` | planned · stage 4 |
+| `manual` | `manual` — shares its data with `help` | **done** |
 | `dust register` | — | **none** |
 | `dust status` | — | **none** |
-| `serve` (dApp connector) | — | **open** |
-| `dev` (contract watch loop) | — | **open** |
-| `contract inspect/deploy/call/state` | — | **open** |
-| `test create/run/list/results` | `test` | planned · stage 4 |
+| `serve` (dApp connector) | — | **declined** |
+| `dev` (contract watch loop) | — | **declined** |
+| `contract inspect/deploy/call/state` | — | **declined** |
+| `test create/run/list/results` | — | **declined** |
 
 ### Why two have no counterpart
 
@@ -77,18 +78,23 @@ Worth stating explicitly rather than leaving as a gap: someone comparing the two
 notice the missing commands and should know it is an absence of a problem, not an absence of a
 feature.
 
-### The three open questions
+### The four declined, and why
 
-**`serve`** — `mn` serves a dApp-connector WebSocket. Cardano's equivalent convention is
-implemented by browser wallets, and it is not clear a CLI should compete with it. Decide before
-stage 4; the answer may be "no".
+Decided rather than left open, so they stop reappearing as gaps.
 
-**`dev`** — `mn`'s watch loop recompiles a contract on save. Cardano has no compile step in the
-default path, so there may be nothing to watch. Revisit if scripts ever enter scope.
+**`serve` — no.** `mn` serves a dApp-connector WebSocket. Cardano's equivalent convention is
+implemented by browser wallets and is well established; a CLI competing with it would be a second
+implementation of someone else's standard for no one's benefit.
 
-**`contract`** — Cardano has no deploy step: scripts travel with the transaction that uses them,
-or are stored as reference outputs. `deploy` does not map. Deferred with the rest of the script
-work, which nothing on the roadmap needs yet.
+**`dev` — no.** `mn`'s watch loop recompiles a contract on save. Cardano has no compile step in the
+default path, so there is nothing to watch. Revisit only if script authoring enters scope.
+
+**`contract` — no.** Cardano has no deploy step: a script travels with the transaction that uses it,
+or is stored as a reference output. `deploy` has nothing to map onto. Nothing on the roadmap needs
+scripts, and native assets and atomic swaps both work without them.
+
+**`test` — no.** `mn` generates E2E suites for Compact dApps. There is no equivalent artefact here to
+generate tests *for*, and a generator with no target is a feature looking for a use.
 
 ---
 
@@ -107,7 +113,7 @@ These are additions, not parity gaps. They exist because the ledger is different
 | `swap inspect` | A received offer is untrusted input; understanding it must be separable from signing it | planned · stage 6 |
 | `swap sign` / `swap submit` | Co-signing one transaction built from both parties' inputs | planned · stage 6 |
 | `address inspect` | Addresses carry a payment credential and a stake credential worth decoding | **done** |
-| `localnet snapshot` / `rollback` | The devkit can fork the chain, so rollback behaviour is testable | planned · stage 4 |
+| `localnet snapshot` / `rollback` | The devkit can fork the chain, but only from its interactive shell | **blocked** |
 
 ---
 
@@ -167,16 +173,30 @@ Still open in this area: `params` and `localnet addresses`, neither of which blo
 `ada-mcp` with 18 annotated tools, and enforced two-step confirmation for anything that moves money
 or deletes a key. Driven end to end with a real MCP client.
 
-**4 · Hardening — mostly taken early.** `params`, `address inspect`, `status` and `localnet reset`
+**4 · Hardening — done.** `params`, `address inspect`, `status` and `localnet reset`
 landed as soon as the plumbing made them single calls. **Preprod is verified**: reads work with no
 account and no API key via a free community API, so nothing needs configuring before first use.
 
-Left here: `manual`, `cache clear`, `localnet snapshot/rollback`, `test`.
+`manual` completes it, reading the same reference data `help` does so the two cannot drift.
 
-Two items are **blocked rather than deferred**, and the reason is worth keeping so neither is picked
-up as easy work: `address derive` needs the `cardano-address` binary installed, and
-`localnet addresses` has no machine-readable source — the devkit prints its twenty addresses to a log
-and its `cluster-info.json` carries ports and chain parameters but not addresses. Log-scraping was
+The rest of what was listed here turned out not to be work, and each disposition is recorded so it
+is not picked up again as an easy win:
+
+**`cache clear` — not applicable.** `mn` has it because the Midnight SDK caches wallet state. This
+tool caches nothing: `~/.ada` holds config, wallet keys, logs and a pid file. Inventing a command
+that clears nothing would be worse than its absence.
+
+**`localnet snapshot` / `rollback` — blocked by the devkit.** Fork and snapshot exist only in its
+interactive shell; the control API has no endpoints for them, and invoking the shell again kills the
+running devnet. Confirmed against its OpenAPI document, not assumed.
+
+**`address derive` — blocked on a tool.** Delegated to the official `cardano-address` binary rather
+than reimplemented, and that binary is not installed. The delegation is deliberate: derivation is the
+highest-consequence step in the stack and a second implementation could only disagree with the
+authoritative one.
+
+**`localnet addresses` — blocked, no source.** The devkit prints its twenty pre-funded addresses to a
+log; `cluster-info.json` carries ports and chain parameters but not addresses. Log-scraping was
 rejected as too fragile for something a user would rely on.
 
 **5 · Assets — done.** `asset policy`, `asset mint`, `asset send`. Minting uses a native-script
@@ -209,7 +229,9 @@ Adversarial cases, each verified to fail safely: replay of a spent swap, the mak
 wrong network, expired offer, unsigned by the maker, garbage input, unknown version, and a
 misrepresented description.
 
-**7 · Publish.** npm as `ada-wallet-cli`, `docs/PUBLISHING.md`, demo.
+**7 · Publish — the only stage left, and it waits on the author's word.** npm as
+`ada-wallet-cli`, `docs/PUBLISHING.md`, a demo, and the Cardano developer portal's Builder Tools
+submission (tracked in the private planning repo).
 
 ---
 

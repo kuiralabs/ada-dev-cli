@@ -85,7 +85,12 @@ export const hasFlag = (args: Args, name: string): boolean => args.flags[name] =
 
 export function flagValue(args: Args, name: string): string | undefined {
   const value = args.flags[name];
-  return typeof value === 'string' ? value : undefined;
+  // An empty value counts as absent. `--wallet=` used to resolve to the empty
+  // string, which `??` then preferred over the configured default — so the flag
+  // neither selected a wallet nor fell back to one. Agents filling a schema send
+  // "" for an omitted field routinely, so this is the common case rather than a
+  // curiosity.
+  return typeof value === 'string' && value !== '' ? value : undefined;
 }
 
 /** Exposed so tests assert against the real set rather than restating it. */

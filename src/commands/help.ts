@@ -7,45 +7,7 @@ import { usageError } from '../lib/errors.ts';
 import { PKG_VERSION } from '../lib/pkg.ts';
 import { EXIT_INVALID_ARGS } from '../lib/exit-codes.ts';
 import { bold, dim } from '../ui/colors.ts';
-
-interface CommandDoc {
-  name: string;
-  usage: string;
-  summary: string;
-  implemented: boolean;
-}
-
-export const COMMANDS: CommandDoc[] = [
-  { name: 'localnet', usage: 'ada localnet <up|down|status|logs|bootstrap|reset>', summary: 'Manage the local devnet', implemented: true },
-  { name: 'tip', usage: 'ada tip', summary: 'Current chain tip', implemented: true },
-  { name: 'info', usage: 'ada info', summary: 'Active network, endpoints and config location', implemented: true },
-  { name: 'config', usage: 'ada config <list|get|set|unset> [key] [value]', summary: 'Persistent configuration', implemented: true },
-  { name: 'help', usage: 'ada help [command]', summary: 'This message', implemented: true },
-  { name: 'wallet', usage: 'ada wallet <generate|list|use|info|remove> [name]', summary: 'Manage wallets', implemented: true },
-  { name: 'balance', usage: 'ada balance [wallet|address]', summary: 'ADA and native assets held', implemented: true },
-  { name: 'utxos', usage: 'ada utxos [wallet|address]', summary: 'Unspent outputs behind a balance', implemented: true },
-  { name: 'airdrop', usage: 'ada airdrop <ada> [--address <addr>]', summary: 'Fund from the devnet faucet', implemented: true },
-  { name: 'transfer', usage: 'ada transfer <to> <ada> [--yes]', summary: 'Send ADA — dry run without --yes', implemented: true },
-  // Designed in docs/COMMANDS.md and not yet built. Listed so an agent reading
-  // this surface learns what is coming instead of concluding the tool is
-  // finished — an empty planned list is a claim, and it was a false one.
-  { name: 'params', usage: 'ada params', summary: 'Protocol parameters — fee coefficients, min-UTxO, limits', implemented: true },
-  { name: 'asset', usage: 'ada asset <policy|mint|send>', summary: 'Native assets: policy, mint, send bundles', implemented: true },
-  { name: 'swap', usage: 'ada swap <build|inspect|sign|submit>', summary: 'Two-party atomic swap — no contract needed', implemented: true },
-  { name: 'address', usage: 'ada address inspect <addr>', summary: 'Decode an address into its parts', implemented: true },
-  { name: 'status', usage: 'ada status', summary: 'One-shot health check: chain, devnet, wallet', implemented: true },
-  { name: 'localnet addresses', usage: 'ada localnet addresses', summary: 'The devnet pre-funded addresses', implemented: false },
-  { name: 'manual', usage: 'ada manual', summary: 'Full reference — every command, every flag', implemented: false },
-];
-
-const GLOBAL_FLAGS: Array<[string, string]> = [
-  ['--json', 'machine-readable output on stdout, nothing else'],
-  ['--network <name>', 'override the configured network for this run'],
-  ['--wallet <name>', 'act on a named wallet instead of the active one'],
-  ['--yes', 'confirm an action that moves money or deletes keys'],
-  ['--version, -v', 'print the version'],
-  ['--help, -h', 'this message'],
-];
+import { COMMANDS, GLOBAL_FLAGS, findCommand } from '../lib/reference.ts';
 
 export default async function help(args: Args): Promise<void> {
   const [topic] = args.positionals;
@@ -57,7 +19,7 @@ export default async function help(args: Args): Promise<void> {
     // success. Both are the kind of quiet wrongness the output contract exists
     // to prevent.
     if (topic) {
-      const doc = COMMANDS.find((c) => c.name === topic);
+      const doc = findCommand(topic);
       if (!doc) {
         throw usageError(`no such command: ${topic}`, 'run `ada help --json` for the command list');
       }
@@ -67,13 +29,13 @@ export default async function help(args: Args): Promise<void> {
     writeJson({
       version: PKG_VERSION,
       commands: COMMANDS.map(({ name, usage, summary, implemented }) => ({ name, usage, summary, implemented })),
-      globalFlags: GLOBAL_FLAGS.map(([flag, description]) => ({ flag, description })),
+      globalFlags: GLOBAL_FLAGS,
     });
     return;
   }
 
   if (topic) {
-    const doc = COMMANDS.find((c) => c.name === topic);
+    const doc = findCommand(topic);
     if (!doc) {
       process.stderr.write(`no such command: ${topic}\n`);
       process.exitCode = EXIT_INVALID_ARGS;
@@ -103,8 +65,8 @@ export default async function help(args: Args): Promise<void> {
   }
   out.push('');
   out.push(bold('Global flags'));
-  const flagWidth = GLOBAL_FLAGS.reduce((max, [f]) => Math.max(max, f.length), 0);
-  for (const [flag, description] of GLOBAL_FLAGS) out.push(`  ${flag.padEnd(flagWidth)}  ${description}`);
+  const flagWidth = GLOBAL_FLAGS.reduce((max, f) => Math.max(max, f.flag.length), 0);
+  for (const f of GLOBAL_FLAGS) out.push(`  ${f.flag.padEnd(flagWidth)}  ${f.description}`);
   out.push('');
 
   process.stdout.write(out.join('\n'));

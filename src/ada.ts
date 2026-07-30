@@ -29,6 +29,7 @@ const COMMAND_LOADERS: Record<string, () => Promise<CommandModule>> = {
   info: () => import('./commands/info.ts'),
   config: () => import('./commands/config.ts'),
   help: () => import('./commands/help.ts'),
+  manual: () => import('./commands/manual.ts'),
 };
 
 const args = parseArgs();

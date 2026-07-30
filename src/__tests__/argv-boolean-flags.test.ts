@@ -73,3 +73,21 @@ describe('ordering does not change meaning', () => {
     }
   });
 });
+
+describe('an empty flag value counts as absent', () => {
+  // Found by the wallet-selection tests: `--wallet=` resolved to the empty string,
+  // which nullish-coalescing preferred over the configured default — so the flag
+  // neither selected anything nor fell back. Agents send "" for omitted fields.
+  it('treats --flag= as if the flag were not passed', () => {
+    expect(flagValue(parseArgs(['balance', '--wallet=']), 'wallet')).toBeUndefined();
+    expect(flagValue(parseArgs(['tip', '--network=']), 'network')).toBeUndefined();
+  });
+
+  it('still returns a real value', () => {
+    expect(flagValue(parseArgs(['tip', '--network=preprod']), 'network')).toBe('preprod');
+  });
+
+  it('does not confuse an absent flag with an empty one', () => {
+    expect(flagValue(parseArgs(['tip']), 'network')).toBeUndefined();
+  });
+});
