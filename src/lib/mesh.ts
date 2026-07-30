@@ -5,7 +5,7 @@
 // provider choice and the mainnet refusal are decided once.
 
 import { MeshWallet, YaciProvider, BlockfrostProvider, KoiosProvider, MeshTxBuilder } from '@meshsdk/core';
-import { OfflineEvaluatorScalus } from '@meshsdk/core-cst';
+import type { OfflineEvaluatorScalus } from '@meshsdk/core-cst';
 import type { NetworkName, ResolvedNetwork } from './cli-config.ts';
 import { configError, networkError, AdaError } from './errors.ts';
 import { EXIT_INTERNAL } from './exit-codes.ts';
@@ -187,6 +187,10 @@ export async function makeEvaluator(
   network: ResolvedNetwork,
   costModels?: number[][],
 ): Promise<OfflineEvaluatorScalus> {
+  // Imported here rather than at module scope. The evaluator pulls in a whole
+  // Plutus VM, and loading it took ~16s — a cost every command touching this file
+  // paid, including ones that never evaluate anything.
+  const { OfflineEvaluatorScalus } = await import('@meshsdk/core-cst');
   const models = costModels ?? await fetchCostModels(network);
   return new OfflineEvaluatorScalus(provider, meshNetworkName(network.name), undefined, models);
 }

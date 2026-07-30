@@ -87,6 +87,22 @@ const withNetwork = (input: Record<string, unknown>, argv: string[]): string[] =
   return n ? [...argv, '--network', n] : argv;
 };
 
+
+/** Blueprint selection flags, shared by every contract tool. */
+const blueprintArgv = (i: Record<string, unknown>): string[] => {
+  const out: string[] = [];
+  for (const [key, flag] of [['blueprint', '--blueprint'], ['module', '--module'], ['validator', '--validator']] as const) {
+    const v = str(i[key]);
+    if (v) out.push(flag, v);
+  }
+  return out;
+};
+
+const paramsArgv = (i: Record<string, unknown>): string[] => {
+  const v = str(i.params);
+  return v ? ['--params', v] : [];
+};
+
 export const TOOLS: ToolDef[] = [
   // ── Reading ────────────────────────────────────────────────
   {
@@ -504,6 +520,127 @@ export const TOOLS: ToolDef[] = [
     toArgv: () => ['reset', '--yes'],
     describeForConsent: () =>
       'Reset the local devnet to genesis. Wallet keys are kept, but every balance and transaction is lost.',
+  },
+  // ── Contracts ────────────────────────────────────────────────────
+  {
+    name: 'ada_contract_inspect',
+    description:
+      'Read an Aiken CIP-57 blueprint: which validators it declares, their handlers, datum and '
+      + 'redeemer names, script hash, and any compile-time parameters that must be applied. '
+      + 'Reads plutus.json; makes no chain call.',
+    annotations: { readOnlyHint: true, idempotentHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        blueprint: { type: 'string', description: 'Path to plutus.json, or a directory holding one.' },
+        module: { type: 'string', description: 'Module name, when several validators exist.' },
+        validator: { type: 'string', description: 'Validator name within that module.' },
+      },
+    },
+    command: 'contract',
+    toArgv: (i) => ['inspect', ...blueprintArgv(i)],
+  },
+  {
+    name: 'ada_contract_address',
+    description:
+      'The script address a validator addresses to, derived from a hash of its compiled code. '
+      + 'No chain call, no fee, no transaction — a Cardano validator has no deploy step and its '
+      + 'address exists as soon as it compiles. Returns the same value as policyId, since for a '
+      + 'minting validator the script hash IS the policy id. Fails with parameters_required when '
+      + 'the validator has unapplied parameters, because those change the address.',
+    annotations: { readOnlyHint: true, idempotentHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        blueprint: { type: 'string' },
+        module: { type: 'string' },
+        validator: { type: 'string' },
+        params: { type: 'string', description: 'JSON array of compile-time parameters, in declared order.' },
+        network: NETWORK,
+      },
+    },
+    command: 'contract',
+    toArgv: (i) => withNetwork(i, ['address', ...blueprintArgv(i), ...paramsArgv(i)]),
+  },
+  {
+    name: 'ada_contract_lock',
+    description:
+      'Lock ADA at a script address with a datum attached — this is how state comes into existence '
+      + 'on Cardano, as an output carrying data rather than a write to a contract. Does NOT execute '
+      + 'on this call: it returns a pending token and a description. Show the description verbatim, '
+      + 'get explicit consent, then call ada_confirm. Funds become spendable only by satisfying the '
+      + 'validator.',
+    annotations: { destructiveHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ada: { type: 'string', description: 'Amount to lock, as a decimal string.' },
+        datumSigner: { type: 'boolean', description: 'Datum holding this wallet\'s own public key hash. The common case.' },
+        datum: { type: 'string', description: 'Datum as Plutus data JSON, for anything else.' },
+        blueprint: { type: 'string' },
+        module: { type: 'string' },
+        validator: { type: 'string' },
+        params: { type: 'string' },
+        wallet: { type: 'string' },
+        network: NETWORK,
+      },
+      required: ['ada'],
+    },
+    command: 'contract',
+    toArgv: (i) => {
+      const argv = ['lock', '--amount', String(i.ada), ...blueprintArgv(i), ...paramsArgv(i), '--yes'];
+      if (i.datumSigner) argv.push('--datum-signer');
+      const d = str(i.datum);
+      if (d) argv.push('--datum', d);
+      const w = str(i.wallet);
+      return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
+    },
+    describeForConsent: (i) =>
+      `Lock ${String(i.ada)} ADA at a script address from wallet "${str(i.wallet) ?? 'the active wallet'}". `
+      + 'It becomes spendable only by a transaction the validator approves. If the datum is wrong, '
+      + 'or nobody can satisfy the validator, the funds are unrecoverable.',
+  },
+  {
+    name: 'ada_contract_unlock',
+    description:
+      'Spend a UTxO sitting at a script address, supplying a redeemer. THIS IS THE CALL: a Cardano '
+      + 'validator runs only as part of validating the transaction that consumes its output, and it '
+      + 'either approves or the whole transaction is rejected. Does NOT execute on this call: it '
+      + 'returns a pending token. Show the description verbatim, get consent, then call ada_confirm.',
+    annotations: { destructiveHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        redeemerMessage: { type: 'string', description: 'Redeemer of a single text field. The common case.' },
+        redeemer: { type: 'string', description: 'Redeemer as Plutus data JSON, for anything else.' },
+        txIn: { type: 'string', description: 'Which script UTxO to spend, as <hash>#<index>. Needed when several exist.' },
+        datum: { type: 'string', description: 'The original datum, required only when the output stored it as a hash.' },
+        blueprint: { type: 'string' },
+        module: { type: 'string' },
+        validator: { type: 'string' },
+        params: { type: 'string' },
+        wallet: { type: 'string' },
+        network: NETWORK,
+      },
+    },
+    command: 'contract',
+    toArgv: (i) => {
+      const argv = ['unlock', ...blueprintArgv(i), ...paramsArgv(i), '--yes'];
+      const m = str(i.redeemerMessage);
+      if (m !== undefined) argv.push('--redeemer-message', m);
+      const r = str(i.redeemer);
+      if (r) argv.push('--redeemer', r);
+      const t = str(i.txIn);
+      if (t) argv.push('--tx-in', t);
+      const d = str(i.datum);
+      if (d) argv.push('--datum', d);
+      const w = str(i.wallet);
+      return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
+    },
+    describeForConsent: (i) =>
+      `Spend a script UTxO into wallet "${str(i.wallet) ?? 'the active wallet'}" using redeemer `
+      + `${str(i.redeemerMessage) ?? str(i.redeemer) ?? '(unspecified)'}. The validator runs during `
+      + 'validation; if it rejects, the transaction fails and the collateral pledged is forfeited.',
   },
 ];
 

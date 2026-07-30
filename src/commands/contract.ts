@@ -8,7 +8,7 @@
 // compiles, and what people call "state" is the datums on UTxOs sitting at that
 // address. Naming operations this chain does not have would teach the wrong model.
 
-import { mConStr0, deserializeAddress, stringToHex, type UTxO } from '@meshsdk/core';
+import type { UTxO } from '@meshsdk/core';
 import type { Args } from '../lib/argv.ts';
 import { flagValue, hasFlag } from '../lib/argv.ts';
 import { loadConfig, resolveNetwork } from '../lib/cli-config.ts';
@@ -17,7 +17,7 @@ import { EXIT_CHAIN_REJECTED } from '../lib/exit-codes.ts';
 import { writeJson } from '../lib/json-output.ts';
 import { openActive, type ActiveContext } from '../lib/active-wallet.ts';
 import { makeTxBuilder, makeEvaluator, withoutCostModelNoise } from '../lib/mesh.ts';
-import { signAndSubmit, translateBuildFailure, selectCollateral, assertMeetsMinValue } from '../lib/tx-common.ts';
+import { signAndSubmit, translateBuildFailure, selectCollateral, requiredCollateral, assertMeetsMinValue } from '../lib/tx-common.ts';
 import { adaToLovelace, formatAda, LOVELACE_UNIT } from '../lib/amount.ts';
 import {
   loadBlueprint, selectValidator, scriptIdentity, scriptBytes, parseParams,
@@ -211,7 +211,7 @@ async function lock(args: Args): Promise<void> {
   if (!amount) throw usageError('lock needs --amount <ada>', 'example: --amount 5');
   const lovelace = adaToLovelace(amount);
 
-  const datum = buildDatum(args, ctx);
+  const datum = await buildDatum(args, ctx);
   const output = { address: identity.address, amount: [{ unit: LOVELACE_UNIT, quantity: lovelace.toString() }] };
 
   // The chain refuses an output holding less ADA than its size demands. Checking
@@ -276,7 +276,7 @@ async function lock(args: Args): Promise<void> {
  * the wallet's own public key hash, which is what an ownership-checking
  * validator like hello_world expects. `--datum` takes raw JSON for anything else.
  */
-function buildDatum(args: Args, ctx: ActiveContext): { value: unknown; describe: string } {
+async function buildDatum(args: Args, ctx: ActiveContext): Promise<{ value: unknown; describe: string }> {
   const raw = flagValue(args, 'datum');
   if (raw) {
     try {
@@ -286,14 +286,21 @@ function buildDatum(args: Args, ctx: ActiveContext): { value: unknown; describe:
     }
   }
   if (hasFlag(args, 'datum-signer')) {
-    const hash = pubKeyHashOf(ctx);
+    const hash = await pubKeyHashOf(ctx);
+    const { mConStr0 } = await mesh();
     return { value: mConStr0([hash]), describe: `constructor 0 [${hash.slice(0, 16)}…] (my key hash)` };
   }
   throw usageError('lock needs a datum',
     'use --datum-signer for a datum holding your own key hash, or --datum <json>');
 }
 
-const pubKeyHashOf = (ctx: ActiveContext): string => deserializeAddress(ctx.payment).pubKeyHash;
+let meshData: typeof import('@meshsdk/core') | undefined;
+/** Mesh's data helpers, loaded only on the paths that build a transaction. The
+ *  read-only subcommands need none of them, and the module is not cheap. */
+const mesh = async () => (meshData ??= await import('@meshsdk/core'));
+
+const pubKeyHashOf = async (ctx: ActiveContext): Promise<string> =>
+  (await mesh()).deserializeAddress(ctx.payment).pubKeyHash;
 
 // ── unlock ───────────────────────────────────────────────────────────
 //
@@ -311,31 +318,46 @@ async function unlock(args: Args): Promise<void> {
   const code = scriptBytes(validator, params);
 
   const target = await resolveScriptUtxo(args, ctx, identity.address);
-  const redeemer = buildRedeemer(args);
+  const redeemer = await buildRedeemer(args);
 
+  const signerHash = await pubKeyHashOf(ctx);
   const utxos = await ctx.wallet.getUtxos();
   const protocol = await ctx.provider.fetchProtocolParameters();
   // Collateral is only forfeited when a script fails after the cheap checks pass,
   // and it must be pure ADA. Selected explicitly because nothing selects it for
   // you, and because once a wallet holds native assets the obvious candidates
-  // stop qualifying — a failure that looks nothing like its cause.
-  const collateral = selectCollateral(utxos, adaToLovelace('5'));
+  // stop qualifying — a failure that looks nothing like its cause. The amount is
+  // derived from the chain's own fee model, not chosen.
+  const collateral = selectCollateral(utxos, requiredCollateral({
+    minFeeA: protocol.minFeeA, minFeeB: protocol.minFeeB,
+    maxTxSize: protocol.maxTxSize, collateralPercent: protocol.collateralPercent,
+  }));
 
   // The evaluator runs the Plutus VM to discover the execution budget this script
   // needs, because the ledger requires that budget declared up front.
   const evaluator = await makeEvaluator(ctx.provider, ctx.network);
 
+  // How the datum is stored decides how it must be supplied back. An inline datum
+  // (CIP-32) travels on the output and the builder just points at it; a datum
+  // stored as a hash was never published, so the spender must already hold it and
+  // pass it explicitly. Assuming inline fails confusingly on the second kind.
+  const datumMode = datumModeOf(target, flagValue(args, 'datum'));
+
   let unsigned: string;
   try {
-    unsigned = await withoutCostModelNoise(() => makeTxBuilder(ctx.provider, { withScripts: true, evaluator })
+    const b = makeTxBuilder(ctx.provider, { withScripts: true, evaluator })
       .spendingPlutusScript(identity.version)
       .txIn(target.input.txHash, target.input.outputIndex, target.output.amount, target.output.address)
       .txInScript(code)
-      .txInRedeemerValue(redeemer.value as never)
-      .txInInlineDatumPresent()
+      .txInRedeemerValue(redeemer.value as never);
+
+    if (datumMode.inline) b.txInInlineDatumPresent();
+    else b.txInDatumValue(datumMode.value as never);
+
+    unsigned = await withoutCostModelNoise(() => b
       // Validators commonly check for a signature; supplying it is harmless when
       // they do not, and the transaction is unprovable without it when they do.
-      .requiredSignerHash(pubKeyHashOf(ctx))
+      .requiredSignerHash(signerHash)
       .txInCollateral(collateral.input.txHash, collateral.input.outputIndex,
                       collateral.output.amount, collateral.output.address)
       .changeAddress(ctx.payment)
@@ -356,6 +378,7 @@ async function unlock(args: Args): Promise<void> {
       spending: `${target.input.txHash}#${target.input.outputIndex}`,
       ada: formatAda(BigInt(recovered)), lovelace: recovered,
       redeemer: redeemer.describe,
+      datumEncoding: datumMode.inline ? 'inline' : 'hash',
       collateral: `${collateral.input.txHash}#${collateral.input.outputIndex}`,
       submitted, ...(txHash ? { txHash } : {}),
     });
@@ -406,9 +429,39 @@ async function resolveScriptUtxo(args: Args, ctx: ActiveContext, scriptAddress: 
 
 const refOf = (u: UTxO): string => `${u.input.txHash}#${u.input.outputIndex}`;
 
-function buildRedeemer(args: Args): { value: unknown; describe: string } {
+/**
+ * Decide how to hand the datum back to the validator.
+ *
+ * No chain publishes the preimage of a hash-stored datum, and the devnet indexer
+ * serves no lookup for one, so there is nowhere to fetch it from. Demanding it up
+ * front is the honest behaviour — the alternative is a build that appears to work
+ * and is rejected at submission.
+ */
+function datumModeOf(utxo: UTxO, supplied: string | undefined): { inline: boolean; value?: unknown } {
+  const out = utxo.output as { plutusData?: string | null; dataHash?: string | null };
+  if (out.plutusData) return { inline: true };
+
+  if (!out.dataHash) {
+    throw new AdaError('no_datum', `${refOf(utxo)} carries no datum`, EXIT_CHAIN_REJECTED,
+      'a spending validator is given a datum; this output has none, so it cannot be spent by one');
+  }
+
+  if (!supplied) {
+    throw new AdaError('datum_required',
+      `${refOf(utxo)} stores its datum as a hash, not inline`, EXIT_CHAIN_REJECTED,
+      'the chain never published the datum itself, so it cannot be recovered — pass the original with --datum <json>');
+  }
+  try {
+    return { inline: false, value: JSON.parse(supplied) };
+  } catch (err) {
+    throw usageError(`--datum is not valid JSON: ${(err as Error).message}`);
+  }
+}
+
+async function buildRedeemer(args: Args): Promise<{ value: unknown; describe: string }> {
   const message = flagValue(args, 'redeemer-message');
   if (message !== undefined) {
+    const { mConStr0, stringToHex } = await mesh();
     return { value: mConStr0([stringToHex(message)]), describe: `constructor 0 ["${message}"]` };
   }
   const raw = flagValue(args, 'redeemer');

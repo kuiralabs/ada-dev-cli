@@ -6,7 +6,7 @@ worse than none, because it gets trusted.
 Legend: `[x]` done and exercised against a real chain · `[ ]` not built · `[—]` deliberately not
 building it, reason given · `[!]` blocked by something outside this repo.
 
-**Now:** 17 commands · 25 MCP tools · 223 offline tests · stages 1–6 closed · stage 7 spine done
+**Now:** 17 commands · 29 MCP tools · 250 offline tests · stages 1–6 closed · stage 7 spine done
 (`inspect`, `address`, `lock`, `unlock`, verified on devnet) · publish held.
 
 ---
@@ -105,7 +105,7 @@ Midnight verbs would name operations this chain does not have.
 - [ ] **Datums and redeemers validated against the declared schema** — CIP-57 gives every argument a `dataType`, so a malformed value is rejected before a transaction is built, naming the expected shape. `mn` has to guess at this boundary; we do not
 - [x] **Blueprint discovery tolerates real layouts** — `plutus.json` sits at the project root only *by convention*, and `mn` carries a list of candidate directories precisely because projects that differ silently miss the scan. Plus `--module` and `--validator`, the axis `aiken` itself uses
 - [ ] **Reference inputs, validity intervals, required signers** — reading a UTxO without spending it, deadline bounds, and signature checks. All present in MeshJS, and a validator surface without them cannot express the common patterns
-- [ ] **Money paths inherit the existing rules** — `lock`, `unlock` and `publish` are dry-run by default, `--yes` to submit, two-step confirmation over MCP
+- [x] **Money paths inherit the existing rules** — `lock` and `unlock` are dry-run by default, `--yes` to submit, and both are gated behind the two-step MCP confirmation with the wallet named in the consent text
 - [x] **Feasibility proven on devnet** — ahead of any command being written, both reference contracts were driven end to end: hello-world locked 5 ADA under an inline datum and unlocked it with the `"Hello, World!"` redeemer; the one-shot policy minted an NFT, burned it, and then **refused a second mint** because its seed UTxO was spent. That last one is the model working as designed, confirmed rather than assumed
 - [ ] **Verified live through our own commands** — the same two cycles driven by `ada contract`, on devnet and then preprod
 - [ ] **Cross-checked against `cardano-cli`** — `aiken blueprint convert --to cardano-cli` emits the envelope it consumes, giving a second independent opinion on a script

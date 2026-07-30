@@ -9,7 +9,7 @@
 // Every test here fails against the version without a boolean-flag set.
 
 import { describe, it, expect } from 'vitest';
-import { parseArgs, hasFlag, flagValue, booleanFlagNames } from '../lib/argv.ts';
+import { parseArgs, hasFlag, flagValue, booleanFlagNames, isNegativeNumber } from '../lib/argv.ts';
 
 describe('boolean flags do not consume the next token', () => {
   it('keeps the subcommand when --json precedes it', () => {
@@ -89,5 +89,50 @@ describe('an empty flag value counts as absent', () => {
 
   it('does not confuse an absent flag with an empty one', () => {
     expect(flagValue(parseArgs(['tip']), 'network')).toBeUndefined();
+  });
+});
+
+describe('a negative number is a value, not a flag', () => {
+  // Found by exploratory testing. `asset mint --qty -1` parsed -1 as a short flag,
+  // so --qty got nothing, the default took over, and the tool silently minted 1
+  // while reporting ok:true. Quiet substitution of a different value is the worst
+  // failure mode available to a tool whose second audience parses stdout.
+  //
+  // Every test here fails against the parser without looksNumeric().
+  it('gives a negative number to the flag that asked for it', () => {
+    expect(flagValue(parseArgs(['asset', 'mint', '--qty', '-1']), 'qty')).toBe('-1');
+  });
+
+  it('does not invent a short flag from a negative number', () => {
+    expect(parseArgs(['asset', 'mint', '--qty', '-1']).flags['1']).toBeUndefined();
+  });
+
+  it('keeps a negative positional as a positional', () => {
+    // `transfer <addr> -5` reported "needs a recipient and an amount" when both
+    // were supplied, because -5 vanished into the flag bag.
+    const args = parseArgs(['transfer', 'addr_test1abc', '-5']);
+    expect(args.positionals).toEqual(['addr_test1abc', '-5']);
+  });
+
+  it('handles a negative decimal', () => {
+    expect(flagValue(parseArgs(['x', '--amount', '-0.5']), 'amount')).toBe('-0.5');
+  });
+
+  it('still treats a real short flag as a flag', () => {
+    const args = parseArgs(['x', '-v']);
+    expect(args.flags.v).toBe(true);
+    expect(args.positionals).toEqual([]);
+  });
+
+  it('does not let a negative number swallow a following flag', () => {
+    const args = parseArgs(['x', '--amount', '-5', '--json']);
+    expect(flagValue(args, 'amount')).toBe('-5');
+    expect(hasFlag(args, 'json')).toBe(true);
+  });
+
+  it('exposes the check so a command can reject a negative it does not want', () => {
+    expect(isNegativeNumber('-1')).toBe(true);
+    expect(isNegativeNumber('-v')).toBe(false);
+    expect(isNegativeNumber('5')).toBe(false);
   });
 });

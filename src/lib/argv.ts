@@ -24,6 +24,18 @@ const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   'force',
 ]);
 
+/**
+ * A negative number is a value, not a flag.
+ *
+ * Without this, `-5` and `-1` parse as short flags. The consequences differ by
+ * command and the quiet one is the dangerous one: `transfer <addr> -5` fails with
+ * "needs a recipient and an amount" when both were given, but `asset mint --qty -1`
+ * fell through to the default and silently minted **1** while reporting ok:true.
+ * A tool whose second audience parses stdout must never substitute a different
+ * value for the one it was asked for.
+ */
+const looksNumeric = (token: string): boolean => /^-\d/.test(token);
+
 export interface Args {
   command?: string;
   positionals: string[];
@@ -57,7 +69,7 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): Args {
       // A value-taking flag consumes the next token unless that token is itself
       // a flag, so `--network --json` leaves network unset rather than setting it
       // to the string '--json'.
-      if (next !== undefined && !next.startsWith('-')) {
+      if (next !== undefined && (!next.startsWith('-') || looksNumeric(next))) {
         flags[body] = next;
         i++;
       } else {
@@ -66,7 +78,7 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): Args {
       continue;
     }
 
-    if (token.startsWith('-') && token.length > 1) {
+    if (token.startsWith('-') && token.length > 1 && !looksNumeric(token)) {
       // Short flags are boolean-only. Bundling (-abc) is deliberately not
       // supported: treating it as one unknown name keeps the mistake visible
       // instead of silently setting three flags nobody asked for.
@@ -92,6 +104,9 @@ export function flagValue(args: Args, name: string): string | undefined {
   // curiosity.
   return typeof value === 'string' && value !== '' ? value : undefined;
 }
+
+/** Exposed so a caller can reject a negative where one makes no sense. */
+export const isNegativeNumber = (value: string): boolean => looksNumeric(value);
 
 /** Exposed so tests assert against the real set rather than restating it. */
 export const booleanFlagNames = (): readonly string[] => [...BOOLEAN_FLAGS];

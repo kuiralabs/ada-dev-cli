@@ -169,6 +169,30 @@ export function translateBuildFailure(
  * for a reason that looks nothing like its cause. So the error says how to make a
  * suitable UTxO rather than only what was missing.
  */
+export interface CollateralParams {
+  minFeeA: number;
+  minFeeB: number;
+  maxTxSize: number;
+  collateralPercent: number;
+}
+
+/**
+ * How much collateral a script transaction must pledge.
+ *
+ * Derived from the chain's own parameters rather than picked: the ledger requires
+ * `collateralPercent` of the fee, and the largest fee a transaction could carry is
+ * bounded by the linear fee model at the maximum transaction size. Pledging
+ * against that bound means the number is always sufficient and never invented.
+ *
+ * Collateral is not spent on success — it is only forfeited when a script fails
+ * after the ledger's cheap checks pass — so erring high costs nothing but a
+ * temporarily unavailable UTxO.
+ */
+export function requiredCollateral(p: CollateralParams): bigint {
+  const maxFee = BigInt(Math.ceil(p.minFeeA * p.maxTxSize + p.minFeeB));
+  return (maxFee * BigInt(Math.ceil(p.collateralPercent)) + 99n) / 100n;
+}
+
 export function selectCollateral(utxos: UTxO[], requiredLovelace: bigint): UTxO {
   const pure = utxos.filter(
     (u) => u.output.amount.length === 1 && u.output.amount[0].unit === LOVELACE_UNIT,

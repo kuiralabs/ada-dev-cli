@@ -1,0 +1,80 @@
+{
+  "preamble": {
+    "title": "aiken-lang/hello_world",
+    "description": "Aiken contracts for project 'aiken-lang/hello_world'",
+    "version": "1.0.0",
+    "plutusVersion": "v3",
+    "compiler": {
+      "name": "Aiken",
+      "version": "v1.1.23+8949565"
+    }
+  },
+  "validators": [
+    {
+      "title": "hello_world.hello_world.spend",
+      "datum": {
+        "title": "datum",
+        "schema": {
+          "$ref": "#/definitions/hello_world~1Datum"
+        }
+      },
+      "redeemer": {
+        "title": "redeemer",
+        "schema": {
+          "$ref": "#/definitions/hello_world~1Redeemer"
+        }
+      },
+      "compiledCode": "59010601010029800aba2aba1aab9faab9eaab9dab9a48888896600264646644b30013370e900118031baa00189919912cc004cdc3a400060126ea801626464b3001300f0028acc004cdc3a400060166ea800e2b30013371e9110d48656c6c6f2c20576f726c642100375c601c60186ea801e26466446600400400244b30010018a508acc004cdc79bae30110010038a518998010011809000a01a40406eb0c03cc040c040c040c040c040c040c040c040c034dd518078051bae300e300c3754601c60186ea800e294100a45900a45900d1bae300d001300a375400b164020601400260146016002600e6ea80062c8028c01c004c01cc020004c01c004c00cdd5003c52689b2b20021",
+      "hash": "61862d972a99950111010c9ce8c16765d62855cb6e1cc1b8bc6d4505"
+    },
+    {
+      "title": "hello_world.hello_world.else",
+      "redeemer": {
+        "schema": {}
+      },
+      "compiledCode": "59010601010029800aba2aba1aab9faab9eaab9dab9a48888896600264646644b30013370e900118031baa00189919912cc004cdc3a400060126ea801626464b3001300f0028acc004cdc3a400060166ea800e2b30013371e9110d48656c6c6f2c20576f726c642100375c601c60186ea801e26466446600400400244b30010018a508acc004cdc79bae30110010038a518998010011809000a01a40406eb0c03cc040c040c040c040c040c040c040c040c034dd518078051bae300e300c3754601c60186ea800e294100a45900a45900d1bae300d001300a375400b164020601400260146016002600e6ea80062c8028c01c004c01cc020004c01c004c00cdd5003c52689b2b20021",
+      "hash": "61862d972a99950111010c9ce8c16765d62855cb6e1cc1b8bc6d4505"
+    }
+  ],
+  "definitions": {
+    "ByteArray": {
+      "dataType": "bytes"
+    },
+    "aiken/crypto/VerificationKeyHash": {
+      "title": "VerificationKeyHash",
+      "dataType": "bytes"
+    },
+    "hello_world/Datum": {
+      "title": "Datum",
+      "anyOf": [
+        {
+          "title": "Datum",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "owner",
+              "$ref": "#/definitions/aiken~1crypto~1VerificationKeyHash"
+            }
+          ]
+        }
+      ]
+    },
+    "hello_world/Redeemer": {
+      "title": "Redeemer",
+      "anyOf": [
+        {
+          "title": "Redeemer",
+          "dataType": "constructor",
+          "index": 0,
+          "fields": [
+            {
+              "title": "msg",
+              "$ref": "#/definitions/ByteArray"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
