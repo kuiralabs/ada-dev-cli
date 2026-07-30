@@ -22,6 +22,7 @@ export const COMMAND_LOADERS: Record<string, CommandLoader> = {
   transfer: () => import('../commands/transfer.ts'),
   asset: () => import('../commands/asset.ts'),
   swap: () => import('../commands/swap.ts'),
+  contract: () => import('../commands/contract.ts'),
   tip: () => import('../commands/tip.ts'),
   params: () => import('../commands/params.ts'),
   address: () => import('../commands/address.ts'),

@@ -143,6 +143,35 @@ export const COMMANDS: CommandDoc[] = [
     ],
   },
   {
+    name: 'contract',
+    usage: 'ada contract <inspect|address>',
+    summary: 'Aiken validators — inspect a blueprint, derive a script address',
+    implemented: true,
+    detail:
+      'A Cardano validator is a pure predicate over (datum, redeemer, transaction). It holds no '
+      + 'state and there is no deploy step: its address is a hash of its compiled code, so it exists '
+      + 'the moment the contract compiles. `address` therefore makes no chain call and costs nothing.\n\n'
+      + 'Both subcommands read the CIP-57 `plutus.json` that `aiken build` produces, found next to '
+      + 'the current directory or in a conventional subdirectory, or named with --blueprint. A '
+      + 'blueprint lists an entry per handler, so one validator appears several times sharing a '
+      + 'hash; --module and --validator narrow it, the same axis `aiken` itself uses.\n\n'
+      + 'A validator with unapplied parameters has no single address — applying them changes the '
+      + 'compiled code, so the hash, so the address. `address` refuses to answer in that case and '
+      + 'names the parameters still missing rather than reporting one of many possible answers.',
+    flags: [
+      { flag: '--blueprint <path>', description: 'path to plutus.json, or a directory holding one' },
+      { flag: '--module <name>', description: 'module to select when several validators exist' },
+      { flag: '--validator <name>', description: 'validator to select within that module' },
+      { flag: '--params <json>', description: 'JSON array of compile-time parameters, in declared order' },
+    ],
+    examples: [
+      'ada contract inspect',
+      'ada contract inspect --module oneshot --validator gift_card --json',
+      'ada contract address',
+      'ada contract address --module oneshot --validator gift_card --params \'["deadbeef"]\'',
+    ],
+  },
+  {
     name: 'swap',
     usage: 'ada swap <build|inspect|sign|submit>',
     summary: 'Two-party atomic swap — no contract needed',
