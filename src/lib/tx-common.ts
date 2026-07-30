@@ -7,10 +7,10 @@
 // across files needs one source of truth — when the library rewords an error,
 // one copy gets fixed and the others silently degrade.
 
-import { getOutputMinLovelace } from '@meshsdk/core';
+import { getOutputMinLovelace, type UTxO } from '@meshsdk/core';
 import { AdaError } from './errors.ts';
 import { EXIT_CHAIN_REJECTED } from './exit-codes.ts';
-import { lovelaceToAda, LOVELACE_UNIT } from './amount.ts';
+import { lovelaceToAda, formatAda, LOVELACE_UNIT } from './amount.ts';
 import type { ActiveContext } from './active-wallet.ts';
 
 /**
@@ -155,3 +155,48 @@ export function translateBuildFailure(
     EXIT_CHAIN_REJECTED,
   );
 }
+
+/**
+ * Pick a UTxO to pledge as collateral for a script transaction.
+ *
+ * Collateral is forfeited only when a script fails *after* passing the ledger's
+ * cheap checks — the chain's defence against being spammed with expensive
+ * failures. It must be **pure ADA**: an output carrying native assets does not
+ * qualify.
+ *
+ * That last rule is the trap. A wallet that has minted or received any token may
+ * have every output carrying one, at which point every script transaction fails
+ * for a reason that looks nothing like its cause. So the error says how to make a
+ * suitable UTxO rather than only what was missing.
+ */
+export function selectCollateral(utxos: UTxO[], requiredLovelace: bigint): UTxO {
+  const pure = utxos.filter(
+    (u) => u.output.amount.length === 1 && u.output.amount[0].unit === LOVELACE_UNIT,
+  );
+
+  if (pure.length === 0) {
+    throw new AdaError('no_collateral',
+      'no pure-ADA UTxO available to pledge as collateral',
+      EXIT_CHAIN_REJECTED,
+      'every output in this wallet carries a native asset. Send yourself some ADA '
+      + 'to create one: ada transfer <your-address> 5 --yes');
+  }
+
+  // Smallest that clears the requirement, so a large output is not tied up.
+  const sufficient = pure
+    .filter((u) => lovelaceOf(u) >= requiredLovelace)
+    .sort((a, b) => Number(lovelaceOf(a) - lovelaceOf(b)));
+
+  if (sufficient.length === 0) {
+    const largest = pure.map(lovelaceOf).reduce((a, b) => (a > b ? a : b), 0n);
+    throw new AdaError('insufficient_collateral',
+      `collateral needs ${formatAda(requiredLovelace)} ADA; largest pure-ADA UTxO holds ${formatAda(largest)}`,
+      EXIT_CHAIN_REJECTED,
+      'collateral is a percentage of the fee and is only taken if the script fails');
+  }
+
+  return sufficient[0];
+}
+
+const lovelaceOf = (u: UTxO): bigint =>
+  BigInt(u.output.amount.find((a) => a.unit === LOVELACE_UNIT)?.quantity ?? '0');

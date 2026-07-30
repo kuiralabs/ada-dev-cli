@@ -144,8 +144,8 @@ export const COMMANDS: CommandDoc[] = [
   },
   {
     name: 'contract',
-    usage: 'ada contract <inspect|address>',
-    summary: 'Aiken validators — inspect a blueprint, derive a script address',
+    usage: 'ada contract <inspect|address|lock|unlock>',
+    summary: 'Aiken validators — inspect, address, lock funds, unlock them',
     implemented: true,
     detail:
       'A Cardano validator is a pure predicate over (datum, redeemer, transaction). It holds no '
@@ -157,18 +157,34 @@ export const COMMANDS: CommandDoc[] = [
       + 'hash; --module and --validator narrow it, the same axis `aiken` itself uses.\n\n'
       + 'A validator with unapplied parameters has no single address — applying them changes the '
       + 'compiled code, so the hash, so the address. `address` refuses to answer in that case and '
-      + 'names the parameters still missing rather than reporting one of many possible answers.',
+      + 'names the parameters still missing rather than reporting one of many possible answers.\n\n'
+      + '`lock` pays to the script address with a datum attached — this is how state comes into '
+      + 'existence here, as an output carrying data rather than a write to a contract. `unlock` '
+      + 'spends such an output with a redeemer, and **that is the call**: a validator runs only as '
+      + 'part of validating the transaction consuming its output. Both are dry runs until --yes.\n\n'
+      + 'Datums are inline (CIP-32) by default. A hash-stored datum cannot be recovered from the '
+      + 'chain, so the spender must already hold it, and the devnet indexer serves no lookup for '
+      + 'one. Collateral is chosen automatically from a pure-ADA output; if every output in the '
+      + 'wallet carries a native asset the error says how to make one.',
     flags: [
       { flag: '--blueprint <path>', description: 'path to plutus.json, or a directory holding one' },
       { flag: '--module <name>', description: 'module to select when several validators exist' },
       { flag: '--validator <name>', description: 'validator to select within that module' },
       { flag: '--params <json>', description: 'JSON array of compile-time parameters, in declared order' },
+      { flag: '--amount <ada>', description: 'how much to lock' },
+      { flag: '--datum-signer', description: 'datum holding your own public key hash (lock)' },
+      { flag: '--datum <json>', description: 'datum as Plutus data JSON (lock)' },
+      { flag: '--redeemer-message <text>', description: 'redeemer of one text field (unlock)' },
+      { flag: '--redeemer <json>', description: 'redeemer as Plutus data JSON (unlock)' },
+      { flag: '--tx-in <hash>#<ix>', description: 'which script UTxO to spend when several exist' },
     ],
     examples: [
       'ada contract inspect',
       'ada contract inspect --module oneshot --validator gift_card --json',
       'ada contract address',
       'ada contract address --module oneshot --validator gift_card --params \'["deadbeef"]\'',
+      'ada contract lock --amount 5 --datum-signer --yes',
+      'ada contract unlock --redeemer-message "Hello, World!" --yes',
     ],
   },
   {

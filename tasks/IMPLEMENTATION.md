@@ -6,8 +6,8 @@ worse than none, because it gets trusted.
 Legend: `[x]` done and exercised against a real chain · `[ ]` not built · `[—]` deliberately not
 building it, reason given · `[!]` blocked by something outside this repo.
 
-**Now:** 17 commands · 25 MCP tools · 216 offline tests · stages 1–6 closed · stage 7 spine started
-(`inspect`, `address` done; `lock`, `unlock` next) · publish held.
+**Now:** 17 commands · 25 MCP tools · 223 offline tests · stages 1–6 closed · stage 7 spine done
+(`inspect`, `address`, `lock`, `unlock`, verified on devnet) · publish held.
 
 ---
 
@@ -85,19 +85,21 @@ Midnight verbs would name operations this chain does not have.
 - [ ] **`contract build` / `contract check`** — delegate to `aiken`, which owns compilation and the validator's own tests. Detect absence and name the install command, as with `cardano-address`
 - [x] **`contract inspect`** — validators, purposes, datum and redeemer schemas, hash, and any unapplied parameters. The blueprint is to this what `contract-info.json` is to Compact
 - [x] **`contract address`** — derived from the blueprint hash, network-discriminated. Cross-checked byte-for-byte against `aiken blueprint address`. Refuses to answer for a validator with unapplied parameters and say which are missing: applying parameters changes the code, so it changes the hash, so it changes the address
-- [ ] **`contract lock`** — pay to a script address with a datum
-- [ ] **`contract unlock`** — spend a script UTxO with a redeemer. This is the call
+- [x] **`contract lock`** — pay to a script address with a datum
+- [x] **`contract unlock`** — spend a script UTxO with a redeemer. This is the call
 - [ ] **`contract utxos`** — what sits at the script address with datums decoded. This is the state
 - [ ] **`contract publish`** — a CIP-33 reference script: the only operation that genuinely publishes code once, and the honest reading of "deploy"
 - [ ] **`contract simulate`** — execution units without submitting, so a budget failure is found before a fee is paid
-- [ ] **Inline datums are the default** — the devnet indexer serves no datum-by-hash endpoint, so a hash-stored datum cannot be recovered from the chain. Datum-hash mode must demand the datum up front rather than failing at spend time
-- [ ] **Collateral selected explicitly** — a pure-ADA UTxO, at 150% of fee. After any mint a wallet's outputs may all carry assets, and every script transaction then fails for a reason that looks nothing like its cause. The error must say how to make one
+- [x] **Inline datums are the default** — the devnet indexer serves no datum-by-hash endpoint, so a hash-stored datum cannot be recovered from the chain. Datum-hash mode must demand the datum up front rather than failing at spend time
+- [x] **Collateral selected explicitly** — a pure-ADA UTxO, at 150% of fee. After any mint a wallet's outputs may all carry assets, and every script transaction then fails for a reason that looks nothing like its cause. The error must say how to make one
 - [x] **The script must be double-CBOR-wrapped before hashing** — proven on devnet: the blueprint's `compiledCode` hashes to a *different* address than `aiken blueprint address` reports. `applyParamsToScript` performs the wrapping, which is why the reference example calls it even with an empty parameter list. Omit it and the tool reports a wrong address confidently, and funds sent there are stranded until someone works out why
-- [ ] **Seed cost models from the chain, on every network** — MeshJS's `fetchCostModels` is a *stub that throws* on both **Yaci and Koios**, so it silently falls back to **mainnet** cost models. Koios is our default for every public network, so this is not a devnet quirk. Both chains serve the real values — Koios at `epoch_params.cost_models`, Yaci at `epochs/latest/parameters` — so we fetch and pass them. This affects fee and budget arithmetic, not only evaluation
-- [ ] **Evaluate offline as the single path** — Yaci's `utils/txs/evaluate` is implemented but delegates to **Ogmios**, which the native devkit distribution does not install (it ships only in the Docker images), so it answers 500 here. Koios evaluation works, also over Ogmios. Rather than branch on provider capability *or* require developers to run a second daemon, use `OfflineEvaluatorScalus` everywhere: one code path, no round trip, nothing extra to install. Proven on devnet
-- [ ] **Provider evaluation as an optional cross-check** — where a provider *can* evaluate (Koios, Blockfrost), a `--verify-budget` comparison against our offline number is a second independent opinion on the same transaction. Same reasoning that chose this stack: a disagreement is information
+- [x] **Seed cost models from the chain, on every network** — MeshJS's `fetchCostModels` is a *stub that throws* on both **Yaci and Koios**, so it silently falls back to **mainnet** cost models. Koios is our default for every public network, so this is not a devnet quirk. Both chains serve the real values — Koios at `epoch_params.cost_models`, Yaci at `epochs/latest/parameters` — so we fetch and pass them. This affects fee and budget arithmetic, not only evaluation
+- [x] **Evaluate offline as the single path** — Yaci's `utils/txs/evaluate` is implemented but delegates to **Ogmios**, which the native devkit distribution does not install (it ships only in the Docker images), so it answers 500 here. Koios evaluation works, also over Ogmios. Rather than branch on provider capability *or* require developers to run a second daemon, use `OfflineEvaluatorScalus` everywhere: one code path, no round trip, nothing extra to install. Proven on devnet
+- [ ] **Ogmios consumed if present, never required** — `ADA_OGMIOS_URL`, or auto-detected on the devkit's own default `localhost:1337`. Same shape as Blockfrost: opt-in through the environment, absence never an error, zero-config path unaffected. We do not install or supervise it — running a second daemon is the devkit's job, as `cardano-node` already is
+- [ ] **`--verify-budget`** — when Ogmios or a capable provider is reachable, evaluate the same transaction both ways and report both. Our offline evaluator is an independent reimplementation of the Plutus VM, so a disagreement with the node is exactly the oracle signal this stack was chosen for, and one of the two is wrong
+- [ ] **Mempool visibility** — the gap Ogmios would close that offline evaluation cannot: between submit and confirmation we currently cannot distinguish "accepted, waiting for a block" from "silently rejected". Worth having wherever it is reachable
 - [ ] **Report both gaps upstream** — `fetchCostModels` is trivially implementable for Koios and Yaci from endpoints already serving the data, which is a well-scoped MeshJS contribution. Yaci's evaluate endpoint failing on well-formed input is a bug report for bloxbean. Neither blocks us; both cost the next person the same day they cost us
-- [ ] **Execution budget is its own error class** — exceeding the memory or step limit is neither insufficient funds nor an invalid transaction, and it is the failure a contract author hits most
+- [x] **Execution budget is its own error class** — exceeding the memory or step limit is neither insufficient funds nor an invalid transaction, and it is the failure a contract author hits most
 - [ ] **Oversized script names the remedy** — inlining a large validator breaches the transaction size limit, which is exactly what reference scripts exist to solve
 - [x] **Plutus version read from the blueprint**, never assumed
 - [ ] **Datums and redeemers validated against the declared schema** — CIP-57 gives every argument a `dataType`, so a malformed value is rejected before a transaction is built, naming the expected shape. `mn` has to guess at this boundary; we do not

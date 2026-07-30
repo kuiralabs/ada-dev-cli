@@ -5,8 +5,9 @@
 // provider choice and the mainnet refusal are decided once.
 
 import { MeshWallet, YaciProvider, BlockfrostProvider, KoiosProvider, MeshTxBuilder } from '@meshsdk/core';
+import { OfflineEvaluatorScalus } from '@meshsdk/core-cst';
 import type { NetworkName, ResolvedNetwork } from './cli-config.ts';
-import { configError, AdaError } from './errors.ts';
+import { configError, networkError, AdaError } from './errors.ts';
 import { EXIT_INTERNAL } from './exit-codes.ts';
 import { assertNotMainnet, type StoredWallet } from './wallet-store.ts';
 
@@ -129,12 +130,65 @@ export interface TxBuilderOptions {
    * Only set this when the transaction contains a Plutus script.
    *
    * With an evaluator present, Mesh runs redeemer evaluation on **every** build —
-   * including a plain payment that has no redeemers to evaluate. The devnet's
-   * evaluate endpoint answers 500 for such a transaction, so a simple transfer
-   * failed with "Evaluate redeemers failed" and a wall of CBOR. Omitting the
-   * evaluator skips a step a script-free transaction never needed.
+   * including a plain payment that has no redeemers to evaluate, which is wasted
+   * work and once broke a simple transfer outright. Omitting it skips a step a
+   * script-free transaction never needed.
    */
   withScripts?: boolean;
+  /** The evaluator, when the transaction contains a script. See {@link makeEvaluator}. */
+  evaluator?: OfflineEvaluatorScalus;
+}
+
+/**
+ * Cost models for the chain we are actually on.
+ *
+ * MeshJS's own `fetchCostModels` is a stub that throws on **both** providers we
+ * default to — Yaci and Koios — and the fallback is silent: it uses *mainnet*
+ * cost models and logs a warning. Since Koios is the default for every public
+ * network, that is not a devnet quirk, and it feeds fee and execution-budget
+ * arithmetic rather than only script evaluation.
+ *
+ * Both chains publish the real values, so there is no reason to accept the
+ * fallback. The named-key objects come back in the ledger's canonical order,
+ * which is the order the evaluator expects.
+ */
+export async function fetchCostModels(network: ResolvedNetwork): Promise<number[][]> {
+  const url = network.isLocal
+    ? `${network.apiUrl}/api/v1/epochs/latest/parameters`
+    : `https://${koiosNetwork(network.name)}.koios.rest/api/v1/epoch_params`;
+
+  const res = await fetch(url);
+  if (!res.ok) throw networkError(`could not read cost models from ${network.name} (${res.status})`);
+  const body = await res.json() as Record<string, unknown> | Record<string, unknown>[];
+  // Koios answers with an array of epochs; Yaci with a single object.
+  const params = (Array.isArray(body) ? body[0] : body) as Record<string, unknown>;
+  const models = params?.cost_models as Record<string, Record<string, number>> | undefined;
+  if (!models) throw networkError(`${network.name} returned no cost models`);
+
+  return (['PlutusV1', 'PlutusV2', 'PlutusV3'] as const)
+    .map((v) => Object.values(models[v] ?? {}));
+}
+
+/**
+ * The script evaluator — offline, on every network.
+ *
+ * Evaluation means running the Plutus VM to discover the execution budget a
+ * script needs, because the ledger requires that budget declared up front: too
+ * low and the script aborts mid-execution and forfeits collateral, too high and
+ * you overpay or breach the per-transaction cap.
+ *
+ * We run it in-process rather than asking a provider. Yaci's evaluate endpoint
+ * delegates to Ogmios, which the native devkit distribution never installs; Koios
+ * can evaluate but cannot supply cost models. One local path avoids branching on
+ * provider capability and needs nothing extra installed.
+ */
+export async function makeEvaluator(
+  provider: Provider,
+  network: ResolvedNetwork,
+  costModels?: number[][],
+): Promise<OfflineEvaluatorScalus> {
+  const models = costModels ?? await fetchCostModels(network);
+  return new OfflineEvaluatorScalus(provider, meshNetworkName(network.name), undefined, models);
 }
 
 /** A transaction builder wired to the same provider, so fees and coin selection
@@ -143,7 +197,7 @@ export function makeTxBuilder(provider: Provider, opts: TxBuilderOptions = {}): 
   return new MeshTxBuilder({
     fetcher: provider,
     submitter: provider,
-    ...(opts.withScripts ? { evaluator: provider } : {}),
+    ...(opts.withScripts && opts.evaluator ? { evaluator: opts.evaluator } : {}),
     verbose: false,
   });
 }
