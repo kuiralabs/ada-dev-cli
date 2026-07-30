@@ -9,28 +9,8 @@ import { toAdaError } from './lib/errors.ts';
 import { EXIT_INVALID_ARGS } from './lib/exit-codes.ts';
 import { writeJsonError, setCurrentCommand } from './lib/json-output.ts';
 import { PKG_VERSION } from './lib/pkg.ts';
+import { loaderFor } from './lib/commands.ts';
 import { errorBlock } from './ui/format.ts';
-
-type CommandModule = { default: (args: ReturnType<typeof parseArgs>) => Promise<void> };
-
-const COMMAND_LOADERS: Record<string, () => Promise<CommandModule>> = {
-  localnet: () => import('./commands/localnet.ts'),
-  wallet: () => import('./commands/wallet.ts'),
-  balance: () => import('./commands/balance.ts'),
-  utxos: () => import('./commands/utxos.ts'),
-  airdrop: () => import('./commands/airdrop.ts'),
-  transfer: () => import('./commands/transfer.ts'),
-  asset: () => import('./commands/asset.ts'),
-  swap: () => import('./commands/swap.ts'),
-  tip: () => import('./commands/tip.ts'),
-  params: () => import('./commands/params.ts'),
-  address: () => import('./commands/address.ts'),
-  status: () => import('./commands/status.ts'),
-  info: () => import('./commands/info.ts'),
-  config: () => import('./commands/config.ts'),
-  help: () => import('./commands/help.ts'),
-  manual: () => import('./commands/manual.ts'),
-};
 
 const args = parseArgs();
 const jsonMode = hasFlag(args, 'json');
@@ -50,7 +30,7 @@ if (hasFlag(args, 'help') || hasFlag(args, 'h')) {
 const command = args.command ?? 'help';
 // Stamped once so every document this run emits carries it.
 setCurrentCommand(command);
-const loader = COMMAND_LOADERS[command];
+const loader = loaderFor(command);
 
 if (!loader) {
   const message = `unknown command: ${command}`;

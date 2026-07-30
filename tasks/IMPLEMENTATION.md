@@ -21,7 +21,7 @@ counterpart, reason given) · **open** (needs a decision)
 
 | | State |
 |---|---|
-| Shipped | 16 commands · 25 MCP tools · 186 offline tests |
+| Shipped | 16 commands · 25 MCP tools · 187 offline tests |
 | Verified live | devnet end to end; **preprod reads with no API key and no setup** |
 | Building now | nothing — **every stage except publish is closed** |
 | Left | **publish only**, and it waits on the author's word |

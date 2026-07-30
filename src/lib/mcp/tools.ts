@@ -8,10 +8,19 @@
 // `localnet` tools here are the minimum needed to answer "is there a chain" and get
 // one — not a second control surface.
 //
-// **Annotations are honest.** `readOnlyHint` means genuinely no state change, so a
-// client may call it without asking. Getting that wrong is how an agent silently
-// spends money, so `transfer` carries `destructiveHint` and does not execute on
-// first call at all — see the confirmation store.
+// **Annotations are honest, and there are two tiers of protection.**
+//
+//   readOnlyHint      no state change; safe to call unasked
+//   destructiveHint   has a side effect; the client should ask
+//   + a consent token cannot proceed at all without an explicit confirm
+//
+// The token tier is reserved for what cannot be undone: spending, minting,
+// committing to a swap, deleting a key, wiping a chain. Creating a wallet,
+// funding one from a devnet faucet whose money is worthless, and stopping a
+// disposable local chain are marked destructive but not token-gated — a token on
+// every side effect would train an agent to redeem them without reading.
+
+import { loadConfig } from '../cli-config.ts';
 
 export interface ToolAnnotations {
   /** No state change. Safe to call without asking the user. */
@@ -55,6 +64,22 @@ const NETWORK = {
 };
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? v : undefined);
+
+/**
+ * The wallet a call would act on if none is named.
+ *
+ * Read at description time so consent text says which account, not "the active
+ * one" — an agent may have switched it earlier in the session, and a user
+ * approving a vague description has not approved the account it turns out to mean.
+ */
+function activeWalletName(): string {
+  try {
+    return loadConfig().activeWallet ?? '(none selected)';
+  } catch {
+    // A description is not worth failing a tool call over.
+    return '(unknown)';
+  }
+}
 
 /** Append `--network` when supplied, so every tool handles it identically. */
 const withNetwork = (input: Record<string, unknown>, argv: string[]): string[] => {
@@ -317,9 +342,13 @@ export const TOOLS: ToolDef[] = [
       const w = str(i.wallet);
       return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
     },
+    // The wallet is named rather than described as "the active wallet". An agent
+    // may have changed the active wallet earlier in the session, and consent given
+    // against a vague description is not consent for the account it turns out to
+    // mean. The name is resolved before the description is written.
     describeForConsent: (i) =>
-      `Send ${String(i.ada)} ADA to ${String(i.to)}`
-      + (str(i.wallet) ? ` from wallet ${str(i.wallet)}` : ' from the active wallet')
+      `Send ${String(i.ada)} ADA to ${String(i.to)} from wallet `
+      + `${str(i.wallet) ?? activeWalletName()}`
       + (str(i.network) ? ` on ${str(i.network)}` : ''),
   },
   {
@@ -359,7 +388,9 @@ export const TOOLS: ToolDef[] = [
       const w = str(i.wallet);
       return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
     },
-    describeForConsent: (i) => `Mint ${String(i.qty)} of a new asset named "${String(i.name)}"`,
+    describeForConsent: (i) =>
+      `Mint ${String(i.qty)} of a new asset named "${String(i.name)}" `
+      + `under wallet ${str(i.wallet) ?? activeWalletName()}`,
   },
   {
     name: 'ada_asset_send',
@@ -388,7 +419,8 @@ export const TOOLS: ToolDef[] = [
       return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
     },
     describeForConsent: (i) =>
-      `Send ${(Array.isArray(i.assets) ? i.assets : []).join(', ')} to ${String(i.to)}`,
+      `Send ${(Array.isArray(i.assets) ? i.assets : []).join(', ')} to ${String(i.to)} `
+      + `from wallet ${str(i.wallet) ?? activeWalletName()}`,
   },
   {
     name: 'ada_swap_build',

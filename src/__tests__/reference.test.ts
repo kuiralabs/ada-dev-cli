@@ -7,20 +7,18 @@
 // designed.
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { COMMANDS, GLOBAL_FLAGS, findCommand } from '../lib/reference.ts';
 import { TOOLS } from '../lib/mcp/tools.ts';
+import { commandNames, loaderFor } from '../lib/commands.ts';
 
-const source = (relative: string): string =>
-  readFileSync(fileURLToPath(new URL(relative, import.meta.url)), 'utf-8');
-
-/** Command names the entry point can actually dispatch. */
-const dispatchable = (): Set<string> => {
-  const entry = source('../ada.ts');
-  const block = entry.slice(entry.indexOf('COMMAND_LOADERS'), entry.indexOf('const args = parseArgs'));
-  return new Set([...block.matchAll(/^\s*(\w+):\s*\(\)\s*=>\s*import/gm)].map((m) => m[1]));
-};
+/**
+ * Command names both entry points can dispatch.
+ *
+ * Read from the real table rather than scraped from a source file. The earlier
+ * version parsed `ada.ts`, which is why it passed while seven MCP tools were
+ * broken: the server had its own table, and the test was pointed at the other one.
+ */
+const dispatchable = (): Set<string> => new Set(commandNames());
 
 describe('every documented command is reachable', () => {
   it('dispatches every command the reference calls implemented', () => {
@@ -47,10 +45,21 @@ describe('every documented command is reachable', () => {
 });
 
 describe('every MCP tool maps to a real command', () => {
-  it('routes each tool to a dispatchable command', () => {
-    const reachable = dispatchable();
+  it('routes each tool to a command that can actually be loaded', () => {
+    // Asserted against the loader itself, not a name list. A tool naming a command
+    // with no loader fails at call time with internal_error, which is exactly how
+    // seven tools shipped broken.
     for (const tool of TOOLS) {
-      expect(reachable.has(tool.command), `${tool.name} -> ${tool.command}`).toBe(true);
+      expect(loaderFor(tool.command), `${tool.name} -> ${tool.command} has no loader`).toBeDefined();
+    }
+  });
+
+  it('can load every command the table names, so a bad import path is caught here', async () => {
+    // A typo in an import path throws only when that command is first invoked —
+    // which for a rarely-used command could be after release.
+    for (const name of commandNames()) {
+      const mod = await loaderFor(name)!();
+      expect(typeof mod.default, `${name} has no default export`).toBe('function');
     }
   });
 

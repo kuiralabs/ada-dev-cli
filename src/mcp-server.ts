@@ -26,28 +26,13 @@ import {
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { captureCommand } from './lib/run-command.ts';
-import type { Args } from './lib/argv.ts';
+import { loaderFor } from './lib/commands.ts';
 import { createConfirmationStore } from './lib/mcp/confirmation.ts';
 import { TOOLS, byName, type ToolDef } from './lib/mcp/tools.ts';
 import { PKG_VERSION, PKG_NAME } from './lib/pkg.ts';
 
 const SKILL_URI = 'ada://skill';
 const SKILL_PATH = fileURLToPath(new URL('../docs/SKILL.md', import.meta.url));
-
-type CommandModule = { default: (args: Args) => Promise<void> };
-
-const COMMAND_LOADERS: Record<string, () => Promise<CommandModule>> = {
-  localnet: () => import('./commands/localnet.ts'),
-  wallet: () => import('./commands/wallet.ts'),
-  balance: () => import('./commands/balance.ts'),
-  utxos: () => import('./commands/utxos.ts'),
-  airdrop: () => import('./commands/airdrop.ts'),
-  transfer: () => import('./commands/transfer.ts'),
-  tip: () => import('./commands/tip.ts'),
-  params: () => import('./commands/params.ts'),
-  address: () => import('./commands/address.ts'),
-  status: () => import('./commands/status.ts'),
-};
 
 const confirmations = createConfirmationStore();
 
@@ -151,7 +136,7 @@ async function handleConfirm(input: Record<string, unknown>) {
 }
 
 async function execute(tool: ToolDef, input: Record<string, unknown>) {
-  const loader = COMMAND_LOADERS[tool.command];
+  const loader = loaderFor(tool.command);
   if (!loader) return failure('internal_error', `no handler for command ${tool.command}`);
 
   const { document } = await captureCommand(tool.command, tool.toArgv(input), loader);

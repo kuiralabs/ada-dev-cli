@@ -220,8 +220,19 @@ you do not have to open a file, and it has named the cause every time so far.
 **Read commands are safe to run without asking.** `tip`, `info`, `localnet status`, `localnet logs`,
 `config list`, `config get`, `help`. Run them freely to answer questions.
 
-**Read commands include** `wallet list`, `wallet info`, `balance`, `utxos`, and a `transfer`
-**without** `--yes` — that one builds a transaction but changes nothing.
+**Read commands include** `wallet list`, `wallet info`, `balance`, `utxos`, `swap inspect`, and a
+`transfer` **without** `--yes` — that one builds a transaction but changes nothing.
+
+**Over MCP there are two tiers of protection.** A tool marked `destructiveHint` has a side effect
+and you should ask before calling it. A tool that returns a **pending token** cannot proceed at all
+until the user confirms — reserved for what cannot be undone: spending, minting, committing to a
+swap, deleting a key, wiping a chain. Creating a wallet, taking devnet faucet money and stopping the
+local chain are the first tier, not the second, because a token on every side effect would train you
+to redeem them without reading.
+
+**A consent description always names the wallet.** If you created or switched a wallet earlier in
+the session, the account a transfer spends from may not be the one the user has in mind — so read
+the description back verbatim rather than summarising it.
 
 **Ask first for anything that changes state.**
 
