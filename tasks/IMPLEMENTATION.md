@@ -1,8 +1,11 @@
 # Implementation tracker
 
-**This is the feature checklist.** Every work session updates it: a row moves to done when its
-tests pass and it has been exercised against a real devnet. `tasks/todo.md` holds the near-term
-build order; this holds the full surface and where each piece stands.
+**This is the single tracker for this tool.** Every work session updates it, in the same session as
+the work — a tracker that lags is worse than none, because it gets trusted. A row moves to done when
+its tests pass and it has been exercised against a real chain.
+
+Nothing else tracks status. `tasks/todo.md` is a pointer here. Strategy and reasoning that should not
+be public live in the private planning repo and deliberately carry no status.
 
 The reference point is `midnight-wallet-cli` (`mn`), which covers the same job on Midnight. Parity
 with it is the bar for "this tool is as useful as the one that already works" — with the
@@ -16,13 +19,15 @@ counterpart, reason given) · **open** (needs a decision)
 
 ## Where this stands
 
-| | Count |
+| | State |
 |---|---|
-| Done | 13 commands + **18 MCP tools**, 114 offline tests, **the loop proven on a real chain over both surfaces** |
-| Next | **MCP server**, then assets and swap. `localnet addresses` and preprod verification are blocked, not deferred |
-| Planned | MCP server, assets, swap, publish |
-| No counterpart | 2 (`dust register`, `dust status`) |
-| Open | 3 (`serve`, `dev`, `contract`) |
+| Shipped | 13 commands · 18 MCP tools · 115 offline tests |
+| Verified live | devnet end to end; **preprod reads with no API key and no setup** |
+| Building now | **assets**, then **swap** |
+| Left after that | `manual`, `cache clear`, `localnet snapshot/rollback`, `test`, publish |
+| Blocked, not deferred | `localnet addresses` (no machine-readable source) · `address derive` (needs the `cardano-address` binary) |
+| No counterpart in `mn` | `dust register`, `dust status` — Cardano pays fees in ADA, so the category does not exist |
+| Needs a decision | `serve`, `dev`, `contract` |
 
 ---
 
@@ -141,7 +146,8 @@ rather than mirroring `mn` reflexively.
 
 ## Stages
 
-Detail and ordering rationale in `tasks/todo.md`. Summary of what each stage closes:
+Ordered so each produces something usable rather than a layer waiting on the next. The first three
+are the loop everything else is debugged inside.
 
 **1 · Walking skeleton — done.** Scaffold, config, error taxonomy, devnet lifecycle, `tip`,
 `info`, `help`. Devnet starts in ~9s with an advancing tip; 41 offline tests including
@@ -159,18 +165,29 @@ Still open in this area: `params` and `localnet addresses`, neither of which blo
 `ada-mcp` with 18 annotated tools, and enforced two-step confirmation for anything that moves money
 or deletes a key. Driven end to end with a real MCP client.
 
-**4 · Hardening.** What is left after the cheap items were taken early: `manual`, `cache clear`,
-`localnet snapshot/rollback`, `test`, and verifying preprod.
+**4 · Hardening — mostly taken early.** `params`, `address inspect`, `status` and `localnet reset`
+landed as soon as the plumbing made them single calls. **Preprod is verified**: reads work with no
+account and no API key via a free community API, so nothing needs configuring before first use.
 
-Two items here are **blocked rather than deferred**, and the reason is worth keeping:
-`address derive` needs the `cardano-address` binary installed, and `localnet addresses` has no
-machine-readable source — the devkit prints the twenty addresses to its log and its
-`cluster-info.json` carries ports and chain parameters but not addresses. Log-scraping was rejected
-as too fragile for something a user would rely on.
+Left here: `manual`, `cache clear`, `localnet snapshot/rollback`, `test`.
 
-**5 · Assets.** Mint under a policy, multi-asset bundles, metadata convention.
+Two items are **blocked rather than deferred**, and the reason is worth keeping so neither is picked
+up as easy work: `address derive` needs the `cardano-address` binary installed, and
+`localnet addresses` has no machine-readable source — the devkit prints its twenty addresses to a log
+and its `cluster-info.json` carries ports and chain parameters but not addresses. Log-scraping was
+rejected as too fragile for something a user would rely on.
 
-**6 · Swap.** The differentiator, with adversarial cases that must each fail safely.
+**5 · Assets — building now.** Mint under a policy, multi-asset bundles in one transaction, and a
+metadata convention decided once rather than per caller.
+
+**6 · Swap.** The differentiator, and the reason this tool is worth building rather than assembling
+by hand each time. A two-party atomic swap needs no smart contract on Cardano — one transaction from
+both parties' inputs, both signatures, so either both sides move or nothing does.
+
+`swap inspect` is the safety-critical piece and stays separate from `swap sign`: a received offer is
+untrusted input, and understanding one must be possible repeatedly, from a script, with no signature
+anywhere near it. Every adversarial case must fail safely — partial signature, replay, expiry,
+mutation after signing, and a counterparty walking away.
 
 **7 · Publish.** npm as `ada-wallet-cli`, `docs/PUBLISHING.md`, demo.
 
