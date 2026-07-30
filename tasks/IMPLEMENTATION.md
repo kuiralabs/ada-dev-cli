@@ -4,8 +4,8 @@
 the work — a tracker that lags is worse than none, because it gets trusted. A row moves to done when
 its tests pass and it has been exercised against a real chain.
 
-Nothing else tracks status. `tasks/todo.md` is a pointer here. Strategy and reasoning that should not
-be public live in the private planning repo and deliberately carry no status.
+**Nothing else tracks status.** Strategy and reasoning that should not be public live in the private
+planning repo, and deliberately carry no status of their own.
 
 The reference point is `midnight-wallet-cli` (`mn`), which covers the same job on Midnight. Parity
 with it is the bar for "this tool is as useful as the one that already works" — with the
@@ -21,9 +21,9 @@ counterpart, reason given) · **open** (needs a decision)
 
 | | State |
 |---|---|
-| Shipped | 13 commands · 18 MCP tools · 115 offline tests |
+| Shipped | 14 commands · 18 MCP tools · 129 offline tests |
 | Verified live | devnet end to end; **preprod reads with no API key and no setup** |
-| Building now | **assets**, then **swap** |
+| Building now | **swap** — the differentiator |
 | Left after that | `manual`, `cache clear`, `localnet snapshot/rollback`, `test`, publish |
 | Blocked, not deferred | `localnet addresses` (no machine-readable source) · `address derive` (needs the `cardano-address` binary) |
 | No counterpart in `mn` | `dust register`, `dust status` — Cardano pays fees in ADA, so the category does not exist |
@@ -99,8 +99,9 @@ These are additions, not parity gaps. They exist because the ledger is different
 |---|---|---|
 | `utxos` | Balance is a sum over a UTxO set. When a number looks wrong, the next question is always which outputs produced it | **done** |
 | `fee estimate` | Fees are knowable before submitting — a dry run is possible here and is not on Midnight | **done** — it is `transfer` without `--yes`, so it cannot disagree with the real path |
-| `asset mint` | Native assets are ledger-level; no contract is needed to create a token | planned · stage 5 |
-| `asset send` | Many distinct assets move in one output as a bundle | planned · stage 5 |
+| `asset policy` | The minting policy is deterministic from the wallet, so it is worth knowing without minting | **done** |
+| `asset mint` | Native assets are ledger-level; no contract is needed to create a token | **done** |
+| `asset send` | Many distinct assets move in one output as a bundle | **done** |
 | `swap build` | Two-party atomic swap needs no smart contract — a ledger primitive | planned · stage 6 |
 | `swap inspect` | A received offer is untrusted input; understanding it must be separable from signing it | planned · stage 6 |
 | `swap sign` / `swap submit` | Co-signing one transaction built from both parties' inputs | planned · stage 6 |
@@ -177,8 +178,18 @@ up as easy work: `address derive` needs the `cardano-address` binary installed, 
 and its `cluster-info.json` carries ports and chain parameters but not addresses. Log-scraping was
 rejected as too fragile for something a user would rely on.
 
-**5 · Assets — building now.** Mint under a policy, multi-asset bundles in one transaction, and a
-metadata convention decided once rather than per caller.
+**5 · Assets — done.** `asset policy`, `asset mint`, `asset send`. Minting uses a native-script
+policy controlled by one key — no Plutus, no redeemers, and the policy is deterministic from the
+wallet, so mints are repeatable. Metadata follows CIP-25 so a minted asset displays in wallets and
+explorers rather than being invisible to them.
+
+`asset send` moves a **bundle** — several distinct assets in one transaction — because that is what
+the ledger natively does. Verified live: minted 100 Silk and 40 Jade, sent 25 Silk + 10 Jade to
+another wallet in a single transaction, and an over-send is refused naming the asset and the amount
+held.
+
+It also surfaces the ADA that must travel with a token output, which otherwise looks like ADA
+going missing.
 
 **6 · Swap.** The differentiator, and the reason this tool is worth building rather than assembling
 by hand each time. A two-party atomic swap needs no smart contract on Cardano — one transaction from

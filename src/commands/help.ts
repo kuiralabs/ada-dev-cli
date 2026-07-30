@@ -30,7 +30,7 @@ export const COMMANDS: CommandDoc[] = [
   // this surface learns what is coming instead of concluding the tool is
   // finished — an empty planned list is a claim, and it was a false one.
   { name: 'params', usage: 'ada params', summary: 'Protocol parameters — fee coefficients, min-UTxO, limits', implemented: true },
-  { name: 'asset', usage: 'ada asset <mint|send>', summary: 'Native assets and bundles', implemented: false },
+  { name: 'asset', usage: 'ada asset <policy|mint|send>', summary: 'Native assets: policy, mint, send bundles', implemented: true },
   { name: 'swap', usage: 'ada swap <build|inspect|sign|submit>', summary: 'Two-party atomic swap', implemented: false },
   { name: 'address', usage: 'ada address inspect <addr>', summary: 'Decode an address into its parts', implemented: true },
   { name: 'status', usage: 'ada status', summary: 'One-shot health check: chain, devnet, wallet', implemented: true },

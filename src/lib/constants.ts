@@ -41,6 +41,17 @@ export const CONFIG_FILE_NAME = 'config.json';
  *  devnet is starting or gone, and either way the user wants to know now. */
 export const LOCAL_HTTP_TIMEOUT_MS = 5_000;
 
+/**
+ * How stale the chain tip may be before the chain is considered stalled.
+ *
+ * A devnet makes a block a second, so half a minute of silence means the producer
+ * has stopped — a state where every query still answers and nothing advances.
+ * Public networks are probabilistic and a several-minute gap is ordinary, so the
+ * threshold there is deliberately loose: a false "stalled" is worse than a slow
+ * one, because it sends people debugging a healthy chain.
+ */
+export const STALL_AFTER_MS = { local: 30_000, public: 600_000 } as const;
+
 /** Upper bound on waiting for a freshly started devnet to answer. */
 export const DEVNET_READY_TIMEOUT_MS = 180_000;
 export const DEVNET_READY_POLL_MS = 1_000;

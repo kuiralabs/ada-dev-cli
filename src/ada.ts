@@ -20,6 +20,7 @@ const COMMAND_LOADERS: Record<string, () => Promise<CommandModule>> = {
   utxos: () => import('./commands/utxos.ts'),
   airdrop: () => import('./commands/airdrop.ts'),
   transfer: () => import('./commands/transfer.ts'),
+  asset: () => import('./commands/asset.ts'),
   tip: () => import('./commands/tip.ts'),
   params: () => import('./commands/params.ts'),
   address: () => import('./commands/address.ts'),

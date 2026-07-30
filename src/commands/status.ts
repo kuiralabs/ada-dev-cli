@@ -13,6 +13,7 @@ import { writeJson } from '../lib/json-output.ts';
 import { listWallets } from '../lib/wallet-store.ts';
 import { devnetPid, isProcessAlive, devnetLogPath } from '../lib/yaci.ts';
 import { PKG_VERSION } from '../lib/pkg.ts';
+import { STALL_AFTER_MS } from '../lib/constants.ts';
 import { fields, heading, ok, warn } from '../ui/format.ts';
 
 export default async function status(args: Args): Promise<void> {
@@ -34,9 +35,19 @@ export default async function status(args: Args): Promise<void> {
   }
 
   const reachable = tip !== undefined;
+
+  // Reachable is not the same as live. A chain whose producer has stopped answers
+  // every query and advances nothing — `status` reported healthy through exactly
+  // that state, which is the same mistake as treating a running process as a
+  // serving API, one level up.
+  const stallLimit = network.isLocal ? STALL_AFTER_MS.local : STALL_AFTER_MS.public;
+  const tipAgeMs = tip?.time ? Date.now() - tip.time * 1000 : undefined;
+  const stalled = reachable && tipAgeMs !== undefined && tipAgeMs > stallLimit;
+
   const wallets = listWallets();
   const activeWallet = config.activeWallet ?? null;
-  const healthy = reachable && (activeWallet === null || wallets.some((w) => w.name === activeWallet));
+  const healthy = reachable && !stalled
+    && (activeWallet === null || wallets.some((w) => w.name === activeWallet));
 
   if (json) {
     writeJson({
@@ -45,8 +56,10 @@ export default async function status(args: Args): Promise<void> {
       network: network.name,
       apiUrl: network.apiUrl,
       chainReachable: reachable,
+      chainAdvancing: reachable ? !stalled : null,
+      ...(stalled ? { stalledForSeconds: Math.round((tipAgeMs ?? 0) / 1000) } : {}),
       ...(reachError ? { chainError: reachError } : {}),
-      tip: tip ? { height: tip.height, slot: tip.slot, epoch: tip.epoch } : null,
+      tip: tip ? { height: tip.height, slot: tip.slot, epoch: tip.epoch, ageSeconds: Math.round((tipAgeMs ?? 0) / 1000) } : null,
       devnet: network.isLocal
         ? { processAlive, pid: pid ?? null, logPath: devnetLogPath() }
         : null,
@@ -60,7 +73,11 @@ export default async function status(args: Args): Promise<void> {
   process.stdout.write(heading(`ada ${PKG_VERSION} — ${healthy ? 'healthy' : 'not ready'}`) + '\n');
   process.stdout.write(fields([
     ['network', network.name],
-    ['chain', reachable ? `reachable, height ${tip?.height ?? '?'}` : `unreachable at ${network.apiUrl}`],
+    ['chain', !reachable
+      ? `unreachable at ${network.apiUrl}`
+      : stalled
+        ? `STALLED — height ${tip?.height ?? '?'}, last block ${Math.round((tipAgeMs ?? 0) / 1000)}s ago`
+        : `advancing, height ${tip?.height ?? '?'}`],
     ...(network.isLocal ? [['devnet', processAlive ? `running (pid ${pid})` : 'not running'] as [string, string]] : []),
     ['wallet', activeWallet ?? 'none selected'],
     ['wallets', String(wallets.length)],
@@ -69,7 +86,12 @@ export default async function status(args: Args): Promise<void> {
   if (!reachable) {
     process.stdout.write('\n' + warn(network.isLocal
       ? 'start the chain with: ada localnet up'
-      : `could not reach ${network.name} — check the endpoint and API key`) + '\n');
+      : `could not reach ${network.name} — check the endpoint`) + '\n');
+  } else if (stalled) {
+    process.stdout.write('\n' + warn('the chain answers but is not producing blocks') + '\n');
+    process.stdout.write(network.isLocal
+      ? '  transactions will sit unconfirmed — restart it: ada localnet down && ada localnet up\n'
+      : '  this is unusual on a public network; check its status page\n');
   } else if (activeWallet === null && wallets.length === 0) {
     process.stdout.write('\n' + warn('no wallets yet — create one with: ada wallet generate <name>') + '\n');
   } else if (healthy) {
