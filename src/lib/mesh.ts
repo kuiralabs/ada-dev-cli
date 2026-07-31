@@ -10,6 +10,7 @@ import type { NetworkName, ResolvedNetwork } from './cli-config.ts';
 import { configError, networkError, AdaError } from './errors.ts';
 import { EXIT_INTERNAL } from './exit-codes.ts';
 import { assertNotMainnet, type StoredWallet } from './wallet-store.ts';
+import { dim } from '../ui/colors.ts';
 
 /**
  * Cardano's network discriminator: 0 for every test network, 1 for mainnet.
@@ -140,33 +141,78 @@ export interface TxBuilderOptions {
 }
 
 /**
+ * How many parameters each Plutus cost model is supposed to have.
+ *
+ * Fixed by the ledger rather than by the network: a V1 script is priced by the
+ * same 166 numbers everywhere, which is what makes a script's cost reproducible.
+ * Confirmed against the devnet's own Alonzo genesis, which declares 166 and 175.
+ *
+ * V3 has grown across protocol versions, so several counts are legitimate.
+ */
+export const EXPECTED_COST_MODEL_SIZES: Record<number, number[]> = {
+  0: [166],            // PlutusV1
+  1: [175],            // PlutusV2
+  2: [251, 297, 300],  // PlutusV3, across protocol versions
+};
+
+export interface CostModelResult {
+  models?: number[][];
+  /** Why they were not usable, when they were not. */
+  rejected?: string;
+}
+
+/**
  * Cost models for the chain we are actually on.
  *
  * MeshJS's own `fetchCostModels` is a stub that throws on **both** providers we
- * default to — Yaci and Koios — and the fallback is silent: it uses *mainnet*
- * cost models and logs a warning. Since Koios is the default for every public
- * network, that is not a devnet quirk, and it feeds fee and execution-budget
- * arithmetic rather than only script evaluation.
+ * default to, and its fallback is silent: mainnet cost models, one warning, wrong
+ * arithmetic for fees as well as execution budgets.
  *
- * Both chains publish the real values, so there is no reason to accept the
- * fallback. The named-key objects come back in the ledger's canonical order,
- * which is the order the evaluator expects.
+ * So we fetch them — but we do not trust them blindly, because the two providers
+ * do not agree. Yaci returns them keyed by parameter name and the counts match
+ * the ledger exactly. Koios returns them keyed by numeric index and reports 332
+ * for PlutusV1, where the ledger fixes it at 166. A wrong cost model does not
+ * fail loudly; it produces a wrong execution budget, which means either overpaying
+ * or a script that aborts mid-run and forfeits its collateral.
+ *
+ * When the shape is implausible we say so and let the evaluator use its built-in
+ * defaults, which are mainnet's — and mainnet's are what a public testnet mirrors.
+ * The important part is that this is now a decision with a reason attached rather
+ * than a silent fallback.
  */
-export async function fetchCostModels(network: ResolvedNetwork): Promise<number[][]> {
+export async function fetchCostModels(network: ResolvedNetwork): Promise<CostModelResult> {
   const url = network.isLocal
     ? `${network.apiUrl}/api/v1/epochs/latest/parameters`
     : `https://${koiosNetwork(network.name)}.koios.rest/api/v1/epoch_params`;
 
-  const res = await fetch(url);
-  if (!res.ok) throw networkError(`could not read cost models from ${network.name} (${res.status})`);
-  const body = await res.json() as Record<string, unknown> | Record<string, unknown>[];
-  // Koios answers with an array of epochs; Yaci with a single object.
-  const params = (Array.isArray(body) ? body[0] : body) as Record<string, unknown>;
-  const models = params?.cost_models as Record<string, Record<string, number>> | undefined;
-  if (!models) throw networkError(`${network.name} returned no cost models`);
+  let params: Record<string, unknown>;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return { rejected: `${network.name} answered ${res.status} for protocol parameters` };
+    const body = await res.json() as Record<string, unknown> | Record<string, unknown>[];
+    // Koios answers with an array of epochs; Yaci with a single object.
+    params = (Array.isArray(body) ? body[0] : body) as Record<string, unknown>;
+  } catch (err) {
+    return { rejected: `could not read cost models from ${network.name}: ${(err as Error).message}` };
+  }
 
-  return (['PlutusV1', 'PlutusV2', 'PlutusV3'] as const)
-    .map((v) => Object.values(models[v] ?? {}));
+  const raw = params?.cost_models as Record<string, Record<string, number>> | undefined;
+  if (!raw) return { rejected: `${network.name} returned no cost models` };
+
+  const models = (['PlutusV1', 'PlutusV2', 'PlutusV3'] as const)
+    .map((v) => Object.values(raw[v] ?? {}));
+
+  for (const [index, sizes] of Object.entries(EXPECTED_COST_MODEL_SIZES)) {
+    const got = models[Number(index)]?.length ?? 0;
+    if (got !== 0 && !sizes.includes(got)) {
+      return {
+        rejected: `PlutusV${Number(index) + 1} came back with ${got} parameters, `
+          + `and the ledger fixes it at ${sizes.join(' or ')}`,
+      };
+    }
+  }
+
+  return { models };
 }
 
 /**
@@ -185,13 +231,19 @@ export async function fetchCostModels(network: ResolvedNetwork): Promise<number[
 export async function makeEvaluator(
   provider: Provider,
   network: ResolvedNetwork,
-  costModels?: number[][],
 ): Promise<OfflineEvaluatorScalus> {
   // Imported here rather than at module scope. The evaluator pulls in a whole
   // Plutus VM, and loading it took ~16s — a cost every command touching this file
   // paid, including ones that never evaluate anything.
   const { OfflineEvaluatorScalus } = await import('@meshsdk/core-cst');
-  const models = costModels ?? await fetchCostModels(network);
+  const { models, rejected } = await fetchCostModels(network);
+
+  if (rejected) {
+    // Not silent. The evaluator's own defaults are mainnet's, which a public
+    // testnet mirrors closely — but the caller should know an assumption was made.
+    process.stderr.write(dim(`  note: using built-in cost models — ${rejected}\n`));
+  }
+
   return new OfflineEvaluatorScalus(provider, meshNetworkName(network.name), undefined, models);
 }
 
