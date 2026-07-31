@@ -11,6 +11,7 @@ import { configError, networkError, AdaError } from './errors.ts';
 import { EXIT_INTERNAL } from './exit-codes.ts';
 import { assertNotMainnet, type StoredWallet } from './wallet-store.ts';
 import { dim } from '../ui/colors.ts';
+import { resolveSlotConfig, describeSlotConfig } from './slot-config.ts';
 
 /**
  * Cardano's network discriminator: 0 for every test network, 1 for mainnet.
@@ -232,7 +233,24 @@ export async function makeEvaluator(
     process.stderr.write(dim(`  note: using built-in cost models — ${rejected}\n`));
   }
 
-  return new OfflineEvaluatorScalus(provider, meshNetworkName(network.name), undefined, models);
+  // **The slot config matters as much as the cost models, and for the same
+  // reason.** A validator reads its validity window in POSIX time while the
+  // transaction declares it in slots, so a wrong conversion asks the script a
+  // different question than the ledger will. MeshJS's `testnet` entry maps every
+  // slot to 1970, which is what passing nothing here used to mean.
+  let tip: ChainTip | undefined;
+  try {
+    tip = await fetchTip(provider);
+  } catch {
+    // Unverifiable rather than wrong; resolveSlotConfig says so.
+  }
+  const slots = await resolveSlotConfig(network, tip ? { slot: tip.slot, time: tip.time } : undefined);
+
+  if (slots.verified === false) {
+    process.stderr.write(dim(`  note: slot conversion — ${describeSlotConfig(slots)}\n`));
+  }
+
+  return new OfflineEvaluatorScalus(provider, meshNetworkName(network.name), slots.config, models);
 }
 
 /** A transaction builder wired to the same provider, so fees and coin selection
