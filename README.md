@@ -71,6 +71,8 @@ any Cardano code, whether or not you use this tool.
 | `ada address derive` | Derive an address through `cardano-address`, cross-checked against the wallet |
 | `ada address inspect` | Decode an address and show its parts |
 | `ada tip` | Current chain tip |
+| `ada slot [+30m]` | Convert between slots and POSIX time, both directions |
+| `ada hash <value>` | blake2b digests, for commitments inside a datum |
 | `ada params` | Protocol parameters — fee coefficients, min-UTxO, execution limits |
 | `ada status` | Chain, devnet and wallet in one call |
 | `ada localnet up/stop/down/status/logs` | Manage a local devnet |

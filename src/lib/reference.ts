@@ -58,6 +58,58 @@ export const COMMANDS: CommandDoc[] = [
     examples: ['ada tip', 'ada tip --network preprod --json'],
   },
   {
+    name: 'slot',
+    usage: 'ada slot [now|+<duration>|<slot>|<posix-ms>]',
+    summary: 'Convert between slots and time, in both directions',
+    implemented: true,
+    detail:
+      'A transaction declares its validity in **slots**; a validator reads that same window in '
+      + '**POSIX milliseconds**. Passing one where the other is meant compares a number near 1,500 '
+      + 'against one near 1,785,478,000,000 — it never matches, and the failure arrives as '
+      + '`ValidationTagMismatch`, which reads as a broken script rather than wrong units.\n\n'
+      + 'So every answer gives both numbers. Use the slot for --valid-until and --valid-from; use '
+      + 'the milliseconds for a deadline inside a validator or a datum.\n\n'
+      + 'A duration is measured from the **chain tip**, not the local clock, because a machine a '
+      + 'few seconds out produces a window the chain disagrees with. The conversion itself is '
+      + 'derived from the chain — a devnet from its own genesis, a public network from the known '
+      + 'parameters — and checked against the tip before it is used. Where the forecast horizon is '
+      + 'knowable, a point beyond it is flagged: a node cannot place such a slot in time, so a '
+      + 'deadline there can never be met.',
+    flags: [
+      { flag: '--network <name>', description: 'which chain to ask' },
+    ],
+    examples: [
+      'ada slot',
+      'ada slot +30m',
+      'ada slot 12345',
+      'ada slot 1785478477000',
+    ],
+  },
+  {
+    name: 'hash',
+    usage: 'ada hash <value>',
+    summary: 'blake2b digests, for commitments that go inside a datum',
+    implemented: true,
+    detail:
+      'A commit-reveal contract — a sealed bid, a hidden move, a bounty answer — puts a hash '
+      + 'on-chain and the preimage nowhere until someone spends. Writing one therefore needs '
+      + 'blake2b-256 before any transaction exists, and that is the one primitive the surrounding '
+      + 'toolchain does not offer: not in the Cardano libraries, and not in Node, which stops at '
+      + 'blake2b-512.\n\n'
+      + 'A validator hashes **bytes**. Text is hashed as its UTF-8 encoding; pass --hex when the '
+      + 'input already is those bytes, since hashing the characters of a hex string instead of what '
+      + 'they denote silently gives a different digest.',
+    flags: [
+      { flag: '--algo <name>', description: 'blake2b-256 (default) or blake2b-224' },
+      { flag: '--hex', description: 'the input is already hex-encoded bytes' },
+    ],
+    examples: [
+      'ada hash "a river"',
+      'ada hash 61207269766572 --hex',
+      'ada hash "a river" --algo blake2b-224',
+    ],
+  },
+  {
     name: 'params',
     usage: 'ada params',
     summary: 'Protocol parameters — fee coefficients, min-UTxO, limits',

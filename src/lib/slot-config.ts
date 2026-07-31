@@ -114,3 +114,43 @@ export function describeSlotConfig(r: SlotConfigResult): string {
     ? `${base}, agrees with the tip`
     : `${base}, DISAGREES with the tip by ${r.driftSeconds}s`;
 }
+
+
+/**
+ * How far ahead a node can still place slots in time.
+ *
+ * Past the next hard-fork boundary the slot-to-time mapping is unknowable, so a
+ * node refuses rather than guessing. That matters more than it sounds: a deadline
+ * baked into a script parameter beyond this point produces a contract that can
+ * never be satisfied, and nothing says so when it is posted.
+ *
+ * Derived from the genesis where one is available: `3k/f` slots is the standard
+ * stability window, and it is what the ledger's own safe zone is computed from.
+ * Roughly 300 slots on a devnet with k=100 and f=1, and about 36 hours on a
+ * public network.
+ */
+export async function forecastHorizonSlots(network: ResolvedNetwork): Promise<number | undefined> {
+  if (!network.isLocal || !network.adminUrl) {
+    // A public network's safe zone is knowable from Ogmios's era summaries, and
+    // guessing without one would be worse than saying nothing.
+    return undefined;
+  }
+  try {
+    const url = `${network.adminUrl.replace(/\/$/, '')}/local-cluster/api/admin/devnet/genesis/shelley`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+    if (!res.ok) return undefined;
+    const g = await res.json() as { securityParam?: number; activeSlotsCoeff?: number };
+    if (!g.securityParam || !g.activeSlotsCoeff) return undefined;
+    return Math.floor((3 * g.securityParam) / g.activeSlotsCoeff);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Slot → the POSIX millisecond its window begins at. */
+export const slotToMs = (slot: number, c: SlotConfig): number =>
+  c.zeroTime + (slot - c.zeroSlot) * c.slotLength;
+
+/** POSIX milliseconds → the slot containing it. */
+export const msToSlot = (ms: number, c: SlotConfig): number =>
+  c.zeroSlot + Math.floor((ms - c.zeroTime) / c.slotLength);
