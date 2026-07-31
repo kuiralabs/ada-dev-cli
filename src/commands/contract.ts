@@ -8,7 +8,7 @@
 // compiles, and what people call "state" is the datums on UTxOs sitting at that
 // address. Naming operations this chain does not have would teach the wrong model.
 
-import type { UTxO } from '@meshsdk/core';
+import type { UTxO, MeshTxBuilder } from '@meshsdk/core';
 import type { Args } from '../lib/argv.ts';
 import { flagValue, hasFlag } from '../lib/argv.ts';
 import { loadConfig, resolveNetwork } from '../lib/cli-config.ts';
@@ -17,8 +17,10 @@ import { EXIT_CHAIN_REJECTED } from '../lib/exit-codes.ts';
 import { writeJson } from '../lib/json-output.ts';
 import { openActive, type ActiveContext } from '../lib/active-wallet.ts';
 import { makeTxBuilder, makeEvaluator, withoutCostModelNoise, type Provider } from '../lib/mesh.ts';
-import { signAndSubmit, translateBuildFailure, selectCollateral, requiredCollateral, assertMeetsMinValue } from '../lib/tx-common.ts';
+import { signAndSubmit, translateBuildFailure, translateHorizon, selectCollateral, requiredCollateral, assertMeetsMinValue } from '../lib/tx-common.ts';
 import { adaToLovelace, formatAda, parseSignedQuantity, LOVELACE_UNIT } from '../lib/amount.ts';
+import { resolveValidity, assertValidityShape, parseOutputRefs, parseSigners, type ValidityWindow } from '../lib/validity.ts';
+import { fetchTip } from '../lib/mesh.ts';
 import { assertAssetName } from './asset.ts';
 
 import {
@@ -350,6 +352,75 @@ interface SpendContext {
   utxos: UTxO[];
   protocol: Awaited<ReturnType<Provider['fetchProtocolParameters']>>;
   evaluator: Awaited<ReturnType<typeof makeEvaluator>>;
+  extras: TxExtras;
+}
+
+/**
+ * Capabilities a real validator commonly needs, and without which a contract
+ * surface cannot express the usual patterns.
+ */
+interface TxExtras {
+  /** CIP-31 reference inputs: read a UTxO's value and datum without spending it. */
+  readOnly: { txHash: string; index: number }[];
+  /** The window in slots during which the transaction may be accepted. */
+  validity: ValidityWindow;
+  /** Other parties whose signature the validator requires. */
+  signers: string[];
+}
+
+interface ExtraFlags {
+  readOnly: { txHash: string; index: number }[];
+  signers: string[];
+  from?: string;
+  until?: string;
+  forDuration?: string;
+  needsTip: boolean;
+}
+
+/** Everything checkable without a chain. Throws on malformed input. */
+function readExtraFlags(args: Args): ExtraFlags {
+  const from = flagValue(args, 'valid-from');
+  const until = flagValue(args, 'valid-until');
+  const forDuration = flagValue(args, 'valid-for');
+  const needsTip = forDuration !== undefined || from?.trim().toLowerCase() === 'now';
+
+  // Everything checkable without a chain, checked now. Only the slot arithmetic
+  // waits for the tip.
+  assertValidityShape({ from, until, forDuration });
+  if (!needsTip) resolveValidity({ from, until, forDuration }, 0);
+
+  return {
+    readOnly: parseOutputRefs(flagValue(args, 'read-only'), '--read-only'),
+    signers: parseSigners(flagValue(args, 'signer')),
+    from, until, forDuration, needsTip,
+  };
+}
+
+/**
+ * Turn a duration into a slot, anchored to the chain.
+ *
+ * A window derived from the local clock is a window the chain may disagree
+ * with: a machine a few seconds fast produces a transaction that is not yet
+ * valid, one a few seconds slow produces one already expired, and both fail in
+ * ways that look like anything but a clock.
+ */
+async function anchorValidity(flags: ExtraFlags, ctx: ActiveContext): Promise<TxExtras> {
+  const tipSlot = flags.needsTip ? (await fetchTip(ctx.provider)).slot ?? 0 : 0;
+  return {
+    readOnly: flags.readOnly,
+    signers: flags.signers,
+    validity: resolveValidity(
+      { from: flags.from, until: flags.until, forDuration: flags.forDuration }, tipSlot),
+  };
+}
+
+/** Apply the extras to a builder. One definition, so every command agrees. */
+function applyExtras(b: MeshTxBuilder, extras: TxExtras): MeshTxBuilder {
+  for (const r of extras.readOnly) b.readOnlyTxInReference(r.txHash, r.index);
+  for (const hash of extras.signers) b.requiredSignerHash(hash);
+  if (extras.validity.invalidBefore !== undefined) b.invalidBefore(extras.validity.invalidBefore);
+  if (extras.validity.invalidHereafter !== undefined) b.invalidHereafter(extras.validity.invalidHereafter);
+  return b;
 }
 
 /** Everything a script spend needs, resolved once. */
@@ -364,6 +435,11 @@ async function prepareSpend(args: Args, ctx: ActiveContext): Promise<SpendContex
   // is knowable without asking a chain anything, and making someone wait for a
   // round trip to be told they forgot a flag is both slower and less clear.
   const redeemer = await buildRedeemer(args, loaded, validator);
+  // Every flag that can be checked without asking a chain anything, checked
+  // here. A malformed --signer or an impossible validity window is knowable
+  // now, and reporting "20 UTxOs sit at the script address" instead is both
+  // slower and about the wrong thing entirely.
+  const extraFlags = readExtraFlags(args);
   const target = await resolveScriptUtxo(args, ctx, identity.address);
 
   // How the datum is stored decides how it must be supplied back. An inline datum
@@ -375,8 +451,9 @@ async function prepareSpend(args: Args, ctx: ActiveContext): Promise<SpendContex
   const protocol = await ctx.provider.fetchProtocolParameters();
   const collateral = pledgeCollateral(utxos, protocol);
   const evaluator = await makeEvaluator(ctx.provider, ctx.network);
+  const extras = await anchorValidity(extraFlags, ctx);
 
-  return { identity, code, target, redeemer, datumMode, collateral, utxos, protocol, evaluator };
+  return { identity, code, target, redeemer, datumMode, collateral, utxos, protocol, evaluator, extras };
 }
 
 /** Build the spending transaction. One definition, two callers. */
@@ -392,6 +469,8 @@ async function buildSpend(ctx: ActiveContext, spend: SpendContext): Promise<stri
 
     if (spend.datumMode.inline) b.txInInlineDatumPresent();
     else b.txInDatumValue(spend.datumMode.value as never);
+
+    applyExtras(b, spend.extras);
 
     return await withoutCostModelNoise(() => b
       // Validators commonly check for a signature; supplying it is harmless when
@@ -566,6 +645,9 @@ async function buildRedeemer(
  */
 function translateScriptFailure(err: unknown, scriptAddress: string): AdaError {
   const message = err instanceof Error ? err.message : String(err);
+
+  const horizon = translateHorizon(message);
+  if (horizon) return horizon;
 
   if (/evaluate redeemers failed|validation failure|script.*fail/i.test(message)) {
     return new AdaError('script_rejected',
@@ -867,6 +949,7 @@ async function mint(args: Args): Promise<void> {
   const quantity = parseSignedQuantity(flagValue(args, 'qty') ?? '1');
 
   const redeemer = await buildRedeemer(args, loaded, validator);
+  const extraFlags = readExtraFlags(args);
   const { stringToHex } = await mesh();
   const assetName = stringToHex(name);
   // For a minting validator the script hash IS the policy id — the namespace
@@ -898,6 +981,8 @@ async function mint(args: Args): Promise<void> {
       .mint(quantity.toString(), policyId, assetName)
       .mintingScript(code)
       .mintRedeemerValue(redeemer.value as never);
+
+    applyExtras(b, await anchorValidity(extraFlags, ctx));
 
     unsigned = await withoutCostModelNoise(() => b
       .txInCollateral(collateral.input.txHash, collateral.input.outputIndex,

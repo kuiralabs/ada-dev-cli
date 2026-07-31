@@ -108,14 +108,64 @@ export async function signAndSubmit(ctx: ActiveContext, unsignedTx: string): Pro
   try {
     return await ctx.wallet.submitTx(await ctx.wallet.signTx(unsignedTx));
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new AdaError(
-      'submit_failed',
-      `the chain rejected the transaction: ${message}`,
-      EXIT_CHAIN_REJECTED,
-      'it was valid when built — the chain state may have moved since',
-    );
+    throw translateSubmitFailure(err);
   }
+}
+
+/**
+ * Shape a chain rejection into something readable.
+ *
+ * A Cardano node's rejections arrive as a Haskell error value serialised through
+ * four layers of JSON — several thousand characters of source locations and era
+ * summaries around a handful of useful words. Emitting that verbatim is bad for a
+ * person and worse for an agent, whose context it floods.
+ *
+ * So: translate the ones we recognise, and truncate the rest while keeping the
+ * beginning, which is where the error constructor sits.
+ */
+export function translateSubmitFailure(err: unknown): AdaError {
+  const message = err instanceof Error ? err.message : String(err);
+
+  const horizon = translateHorizon(message);
+  if (horizon) return horizon;
+
+  return new AdaError(
+    'submit_failed',
+    `the chain rejected the transaction: ${summarise(message)}`,
+    EXIT_CHAIN_REJECTED,
+    'it was valid when built — the chain state may have moved since',
+  );
+}
+
+/**
+ * A validity bound the chain cannot place in time.
+ *
+ * A node knows the slot schedule only a bounded distance ahead; past the next
+ * hard-fork boundary the slot-to-time mapping is unknowable, so it refuses rather
+ * than guessing. That horizon is short on a devnet with small epochs and roughly
+ * a day and a half on mainnet — so a window that is fine in production can be
+ * rejected locally, which is exactly the confusion worth removing.
+ */
+export function translateHorizon(message: string): AdaError | undefined {
+  if (!/PastHorizon|TimeTranslation/i.test(message)) return undefined;
+  const slot = message.match(/SlotNo (\d+)/)?.[1];
+  return new AdaError('validity_past_horizon',
+    slot
+      ? `slot ${slot} is further ahead than this chain can place in time`
+      : 'the validity window reaches further ahead than this chain can place in time',
+    EXIT_CHAIN_REJECTED,
+    'a node knows the slot schedule only a bounded distance ahead — shorten the window with '
+    + '--valid-for, or set --valid-until nearer the tip. The limit is much shorter on a devnet '
+    + 'than on a public network');
+}
+
+/** Keep the first line and the leading text; drop the wall of source locations. */
+const MAX_CHAIN_ERROR = 400;
+function summarise(message: string): string {
+  const collapsed = message.replace(/\s+/g, ' ').trim();
+  return collapsed.length > MAX_CHAIN_ERROR
+    ? `${collapsed.slice(0, MAX_CHAIN_ERROR)}… (${collapsed.length} chars, truncated)`
+    : collapsed;
 }
 
 /**

@@ -186,7 +186,16 @@ export const COMMANDS: CommandDoc[] = [
       + '`mint` mints or burns under a Plutus policy, where the script hash is the policy id. A '
       + 'negative --qty burns. --spend names a UTxO the policy requires be consumed, which is how a '
       + 'one-shot policy guarantees it can only ever mint once. `asset mint` remains the '
-      + 'native-script path for when you just want a token and have no contract.',
+      + 'native-script path for when you just want a token and have no contract.\n\n'
+      + 'Three flags exist for what real validators check. `--read-only` adds CIP-31 reference '
+      + 'inputs, read without being spent, which is how an oracle pattern reads a price without '
+      + 'consuming it. `--signer` names other parties whose signature the validator requires — it '
+      + 'declares the requirement rather than producing the signature, so the transaction cannot '
+      + 'settle until that key has signed. `--valid-from`/`--valid-until`/`--valid-for` set the '
+      + 'window a deadline validator reads; durations are measured from the **chain tip**, not the '
+      + 'local clock, because a machine a few seconds off produces a window the chain disagrees '
+      + 'with. Note that a node can only place slots in time a bounded distance ahead, which is '
+      + 'much shorter on a devnet than on a public network.',
     flags: [
       { flag: '--blueprint <path>', description: 'path to plutus.json, or a directory holding one' },
       { flag: '--module <name>', description: 'module to select when several validators exist' },
@@ -204,6 +213,11 @@ export const COMMANDS: CommandDoc[] = [
       { flag: '--qty <n>', description: 'quantity; negative burns (mint)' },
       { flag: '--spend <hash>#<ix>', description: 'UTxO the policy requires be consumed (mint)' },
       { flag: '--to-self', description: 'park a reference script where it can be recovered (publish)' },
+      { flag: '--read-only <ref>', description: 'UTxOs to read without spending (CIP-31), comma-separated' },
+      { flag: '--signer <hash>', description: 'other public-key hashes the validator requires, comma-separated' },
+      { flag: '--valid-from <slot|now>', description: 'earliest slot the transaction may be accepted' },
+      { flag: '--valid-until <slot>', description: 'latest slot the transaction may be accepted' },
+      { flag: '--valid-for <duration>', description: 'window length from the chain tip, e.g. 30m' },
     ],
     examples: [
       'ada contract build',

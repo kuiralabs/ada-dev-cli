@@ -617,6 +617,11 @@ export const TOOLS: ToolDef[] = [
         redeemer: { type: 'string', description: 'Redeemer as Plutus data JSON, for anything else.' },
         txIn: { type: 'string', description: 'Which script UTxO to spend, as <hash>#<index>. Needed when several exist.' },
         datum: { type: 'string', description: 'The original datum, required only when the output stored it as a hash.' },
+        readOnly: { type: 'string', description: 'UTxOs to read without spending (CIP-31), as <hash>#<index>, comma-separated.' },
+        signer: { type: 'string', description: 'Other public-key hashes the validator requires, comma-separated. Declares the requirement; does not produce the signature.' },
+        validFrom: { type: 'string', description: 'Earliest slot, or "now" for the chain tip.' },
+        validUntil: { type: 'string', description: 'Latest slot.' },
+        validFor: { type: 'string', description: 'Window length from the chain tip, e.g. "30m". A node can only place slots in time a bounded distance ahead.' },
         blueprint: { type: 'string' },
         module: { type: 'string' },
         validator: { type: 'string' },
@@ -636,6 +641,12 @@ export const TOOLS: ToolDef[] = [
       if (t) argv.push('--tx-in', t);
       const d = str(i.datum);
       if (d) argv.push('--datum', d);
+      for (const [k, f] of [['readOnly', '--read-only'], ['signer', '--signer'],
+                            ['validFrom', '--valid-from'], ['validUntil', '--valid-until'],
+                            ['validFor', '--valid-for']] as const) {
+        const v = str(i[k]);
+        if (v) argv.push(f, v);
+      }
       const w = str(i.wallet);
       return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
     },
@@ -660,6 +671,11 @@ export const TOOLS: ToolDef[] = [
         redeemer: { type: 'string' },
         txIn: { type: 'string' },
         datum: { type: 'string' },
+        readOnly: { type: 'string', description: 'UTxOs to read without spending (CIP-31), as <hash>#<index>, comma-separated.' },
+        signer: { type: 'string', description: 'Other public-key hashes the validator requires, comma-separated. Declares the requirement; does not produce the signature.' },
+        validFrom: { type: 'string', description: 'Earliest slot, or "now" for the chain tip.' },
+        validUntil: { type: 'string', description: 'Latest slot.' },
+        validFor: { type: 'string', description: 'Window length from the chain tip, e.g. "30m". A node can only place slots in time a bounded distance ahead.' },
         blueprint: { type: 'string' },
         module: { type: 'string' },
         validator: { type: 'string' },
@@ -674,6 +690,12 @@ export const TOOLS: ToolDef[] = [
       const m = str(i.redeemerMessage);
       if (m !== undefined) argv.push('--redeemer-message', m);
       for (const [k, f] of [['redeemer', '--redeemer'], ['txIn', '--tx-in'], ['datum', '--datum']] as const) {
+        const v = str(i[k]);
+        if (v) argv.push(f, v);
+      }
+      for (const [k, f] of [['readOnly', '--read-only'], ['signer', '--signer'],
+                            ['validFrom', '--valid-from'], ['validUntil', '--valid-until'],
+                            ['validFor', '--valid-for']] as const) {
         const v = str(i[k]);
         if (v) argv.push(f, v);
       }
@@ -731,6 +753,11 @@ export const TOOLS: ToolDef[] = [
         redeemer: { type: 'string', description: 'Redeemer as Plutus data JSON.' },
         redeemerMessage: { type: 'string' },
         spend: { type: 'string', description: 'A UTxO the policy requires be consumed, as <hash>#<index>. How a one-shot policy guarantees it mints only once.' },
+        readOnly: { type: 'string', description: 'UTxOs to read without spending (CIP-31), as <hash>#<index>, comma-separated.' },
+        signer: { type: 'string', description: 'Other public-key hashes the validator requires, comma-separated. Declares the requirement; does not produce the signature.' },
+        validFrom: { type: 'string', description: 'Earliest slot, or "now" for the chain tip.' },
+        validUntil: { type: 'string', description: 'Latest slot.' },
+        validFor: { type: 'string', description: 'Window length from the chain tip, e.g. "30m". A node can only place slots in time a bounded distance ahead.' },
         blueprint: { type: 'string' },
         module: { type: 'string' },
         validator: { type: 'string' },
@@ -748,6 +775,12 @@ export const TOOLS: ToolDef[] = [
       const m = str(i.redeemerMessage);
       if (m !== undefined) argv.push('--redeemer-message', m);
       for (const [k, f] of [['redeemer', '--redeemer'], ['spend', '--spend']] as const) {
+        const v = str(i[k]);
+        if (v) argv.push(f, v);
+      }
+      for (const [k, f] of [['readOnly', '--read-only'], ['signer', '--signer'],
+                            ['validFrom', '--valid-from'], ['validUntil', '--valid-until'],
+                            ['validFor', '--valid-for']] as const) {
         const v = str(i[k]);
         if (v) argv.push(f, v);
       }
