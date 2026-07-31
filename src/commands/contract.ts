@@ -329,8 +329,13 @@ async function unlock(args: Args): Promise<void> {
   const identity = scriptIdentity(loaded, validator, ctx.network.name, params);
   const code = scriptBytes(validator, params);
 
-  const target = await resolveScriptUtxo(args, ctx, identity.address);
+  // Argument validation before any network call. A missing or malformed redeemer
+  // is knowable without asking a chain anything, and making someone wait for a
+  // round trip to be told they forgot a flag is both slower and less clear —
+  // they get "4 UTxOs sit at the script address" when the real problem is that
+  // --redeemer was never passed.
   const redeemer = await buildRedeemer(args);
+  const target = await resolveScriptUtxo(args, ctx, identity.address);
 
   const signerHash = await pubKeyHashOf(ctx);
   const utxos = await ctx.wallet.getUtxos();

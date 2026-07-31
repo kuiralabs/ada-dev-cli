@@ -6,7 +6,7 @@ worse than none, because it gets trusted.
 Legend: `[x]` done and exercised against a real chain · `[ ]` not built · `[—]` deliberately not
 building it, reason given · `[!]` blocked by something outside this repo.
 
-**Now:** 17 commands · 29 MCP tools · 270 offline tests · stages 1–6 closed · stage 7 spine done
+**Now:** 17 commands · 29 MCP tools · 270 offline tests + 7 devnet tests · stages 1–6 closed · stage 7 spine done
 (`inspect`, `address`, `lock`, `unlock`, verified on devnet) · publish held.
 
 ---
@@ -107,7 +107,8 @@ Midnight verbs would name operations this chain does not have.
 - [ ] **Reference inputs, validity intervals, required signers** — reading a UTxO without spending it, deadline bounds, and signature checks. All present in MeshJS, and a validator surface without them cannot express the common patterns
 - [x] **Money paths inherit the existing rules** — `lock` and `unlock` are dry-run by default, `--yes` to submit, and both are gated behind the two-step MCP confirmation with the wallet named in the consent text
 - [x] **Feasibility proven on devnet** — ahead of any command being written, both reference contracts were driven end to end: hello-world locked 5 ADA under an inline datum and unlocked it with the `"Hello, World!"` redeemer; the one-shot policy minted an NFT, burned it, and then **refused a second mint** because its seed UTxO was spent. That last one is the model working as designed, confirmed rather than assumed
-- [ ] **Verified live through our own commands** — the same two cycles driven by `ada contract`, on devnet and then preprod
+- [x] **Verified live through our own commands, repeatably** — `npm run test:devnet` drives lock, unlock, both datum encodings, a rejected redeemer and a rejected signer through the CLI against a real chain, asserting the money did not move in the failure cases. It skips loudly when no devnet is reachable rather than passing vacuously
+- [ ] **The same on preprod** — the devnet suite pointed at a public network
 - [ ] **Cross-checked against `cardano-cli`** — `aiken blueprint convert --to cardano-cli` emits the envelope it consumes, giving a second independent opinion on a script
 - [—] **Withdrawal and certificate validators** — the blueprint's `withdraw` and `publish` purposes. MeshJS supports both; out of scope for v1, recorded so the absence is a decision
 
