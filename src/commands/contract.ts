@@ -13,7 +13,7 @@ import type { Args } from '../lib/argv.ts';
 import { flagValue, hasFlag } from '../lib/argv.ts';
 import { loadConfig, resolveNetwork } from '../lib/cli-config.ts';
 import { usageError, AdaError } from '../lib/errors.ts';
-import { EXIT_CHAIN_REJECTED } from '../lib/exit-codes.ts';
+import { EXIT_CHAIN_REJECTED, EXIT_INTERNAL } from '../lib/exit-codes.ts';
 import { writeJson } from '../lib/json-output.ts';
 import { openActive, type ActiveContext } from '../lib/active-wallet.ts';
 import { makeTxBuilder, makeEvaluator, costModelsFor, withoutCostModelNoise, type Provider } from '../lib/mesh.ts';
@@ -31,6 +31,8 @@ import {
   type BlueprintValidator, type LoadedBlueprint,
 } from '../lib/blueprint.ts';
 import { runAiken } from '../lib/aiken.ts';
+import { crossCheckScriptHash } from '../lib/cardano-cli.ts';
+import { probeOgmios, evaluateWithOgmios } from '../lib/ogmios.ts';
 import { fields, heading } from '../ui/format.ts';
 import { dim, bold } from '../ui/colors.ts';
 
@@ -177,10 +179,26 @@ async function address(args: Args): Promise<void> {
   const identity = scriptIdentity(loaded, validator, network.name, params);
   const n = splitTitle(validator.title);
 
+  // A third opinion, on request. Ours comes from MeshJS and the blueprint's from
+  // Aiken; cardano-cli is the implementation the ledger is built from. An address
+  // that is confidently wrong strands funds where nobody can reach them, so the
+  // disagreement is the part worth knowing about.
+  const crossCheck = hasFlag(args, 'cross-check')
+    ? crossCheckScriptHash(scriptBytes(validator, params), identity.version, identity.hash)
+    : undefined;
+
+  if (crossCheck && crossCheck.agrees === false) {
+    throw new AdaError('cross_check_failed',
+      `cardano-cli computes ${crossCheck.hash} where we compute ${identity.hash}`,
+      EXIT_INTERNAL,
+      'two implementations disagree about this script — do not send funds to this address');
+  }
+
   if (hasFlag(args, 'json')) {
     writeJson({
       network: network.name,
       blueprint: loaded.path,
+      ...(crossCheck ? { crossCheck } : {}),
       module: n.module,
       validator: n.validator,
       plutusVersion: identity.version,
@@ -202,6 +220,11 @@ async function address(args: Args): Promise<void> {
     ['hash', identity.hash],
     ['policy id', identity.hash],
   ]) + '\n');
+  if (crossCheck) {
+    process.stderr.write(fields([['cross-check', crossCheck.agrees
+      ? `${crossCheck.version ?? 'cardano-cli'} agrees`
+      : crossCheck.unavailable ?? 'unavailable']]) + '\n');
+  }
   process.stderr.write('\n' + dim('  No chain call: the address is derived from the compiled code.') + '\n\n');
 
   // The address alone on stdout, so `addr=$(ada contract address)` composes.
@@ -836,6 +859,34 @@ async function simulate(args: Args): Promise<void> {
     { mem: 0, steps: 0 },
   );
 
+  // A second opinion, when one is reachable and asked for.
+  //
+  // Our number comes from a Plutus VM reimplemented in JavaScript; the node's
+  // comes from the implementation that will judge the transaction. Agreement is
+  // reassurance and disagreement is information — but a missing second opinion
+  // must never fail an operation that already has a first, so this only ever adds
+  // to the report.
+  let verify: Record<string, unknown> | undefined;
+  if (hasFlag(args, 'verify-budget')) {
+    const status = await probeOgmios(ctx.network);
+    if (!status.reachable || !status.url) {
+      verify = { available: false, reason: status.reason ?? 'unreachable', ...(status.url ? { url: status.url } : {}) };
+    } else {
+      const { budgets, error } = await evaluateWithOgmios(status.url, unsigned);
+      if (error || !budgets) {
+        verify = { available: true, url: status.url, error: error ?? 'no budgets returned' };
+      } else {
+        const theirs = budgets.reduce(
+          (acc, b) => ({ mem: acc.mem + b.mem, steps: acc.steps + b.steps }), { mem: 0, steps: 0 });
+        verify = {
+          available: true, url: status.url, version: status.version,
+          node: theirs,
+          agrees: theirs.mem === used.mem && theirs.steps === used.steps,
+        };
+      }
+    }
+  }
+
   const maxMem = Number(protocol.maxTxExMem);
   const maxSteps = Number(protocol.maxTxExSteps);
   const pct = (n: number, max: number) => (max > 0 ? Math.round((n / max) * 1000) / 10 : 0);
@@ -858,6 +909,7 @@ async function simulate(args: Args): Promise<void> {
       maxTxSize: protocol.maxTxSize,
       ...(describeWindow(spend.extras.validity) ? { validity: describeWindow(spend.extras.validity) } : {}),
       withinLimits: used.mem <= maxMem && used.steps <= maxSteps && sizeBytes <= protocol.maxTxSize,
+      ...(verify ? { verifyBudget: verify } : {}),
     });
     return;
   }
@@ -870,6 +922,12 @@ async function simulate(args: Args): Promise<void> {
     ['script fee', `${formatAda(BigInt(scriptFee))}`],
     ['tx size', `${sizeBytes} / ${protocol.maxTxSize} bytes`],
   ]) + '\n');
+  if (verify) {
+    const node = verify.node as { mem: number; steps: number } | undefined;
+    process.stderr.write(fields([['verified', node
+      ? (verify.agrees ? 'the node agrees' : `the node says ${node.mem.toLocaleString()} / ${node.steps.toLocaleString()}`)
+      : `unavailable — ${verify.reason ?? verify.error}`]]) + '\n');
+  }
   process.stderr.write('\n' + dim('  Nothing submitted. The validator ran and approved.') + '\n\n');
 }
 

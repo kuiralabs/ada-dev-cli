@@ -195,7 +195,15 @@ export const COMMANDS: CommandDoc[] = [
       + 'window a deadline validator reads; durations are measured from the **chain tip**, not the '
       + 'local clock, because a machine a few seconds off produces a window the chain disagrees '
       + 'with. Note that a node can only place slots in time a bounded distance ahead, which is '
-      + 'much shorter on a devnet than on a public network.',
+      + 'much shorter on a devnet than on a public network.\n\n'
+      + 'Two flags ask something else the same question. `--cross-check` has `cardano-cli` compute '
+      + 'the script hash independently, and refuses to report an address the two disagree about — a '
+      + 'confidently wrong address strands funds where nobody can reach them. `--verify-budget` asks '
+      + 'a node, through Ogmios, for the execution units we computed locally; ours come from a Plutus '
+      + 'VM in JavaScript, the node\'s from the implementation that will judge the transaction. '
+      + 'Neither is required and neither can fail an operation: Ogmios is used where reachable, found '
+      + 'via `ADA_OGMIOS_URL` or the devkit\'s default port on a local chain, and its absence is '
+      + 'reported rather than assumed.',
     flags: [
       { flag: '--blueprint <path>', description: 'path to plutus.json, or a directory holding one' },
       { flag: '--module <name>', description: 'module to select when several validators exist' },
@@ -218,6 +226,8 @@ export const COMMANDS: CommandDoc[] = [
       { flag: '--valid-from <slot|now>', description: 'earliest slot the transaction may be accepted' },
       { flag: '--valid-until <slot>', description: 'latest slot the transaction may be accepted' },
       { flag: '--valid-for <duration>', description: 'window length from the chain tip, e.g. 30m' },
+      { flag: '--cross-check', description: 'ask cardano-cli for the same script hash (address)' },
+      { flag: '--verify-budget', description: 'ask a node for the same execution units (simulate)' },
     ],
     examples: [
       'ada contract build',

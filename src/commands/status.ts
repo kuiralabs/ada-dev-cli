@@ -10,6 +10,7 @@ import { flagValue, hasFlag } from '../lib/argv.ts';
 import { loadConfig, resolveNetwork, configPath } from '../lib/cli-config.ts';
 import { makeProvider, fetchTip } from '../lib/mesh.ts';
 import { writeJson } from '../lib/json-output.ts';
+import { probeOgmios } from '../lib/ogmios.ts';
 import { listWallets } from '../lib/wallet-store.ts';
 import { devnetPid, isProcessAlive, devnetLogPath } from '../lib/yaci.ts';
 import { PKG_VERSION } from '../lib/pkg.ts';
@@ -35,6 +36,7 @@ export default async function status(args: Args): Promise<void> {
   }
 
   const reachable = tip !== undefined;
+  const ogmios = await probeOgmios(network);
 
   // Reachable is not the same as live. A chain whose producer has stopped answers
   // every query and advances nothing — `status` reported healthy through exactly
@@ -53,6 +55,11 @@ export default async function status(args: Args): Promise<void> {
     writeJson({
       version: PKG_VERSION,
       healthy,
+      // Reported so its absence is visible rather than inferred. Nothing here
+      // requires it; --verify-budget and mempool visibility use it when present.
+      ogmios: { reachable: ogmios.reachable, ...(ogmios.url ? { url: ogmios.url } : {}),
+                ...(ogmios.version ? { version: ogmios.version } : {}),
+                ...(ogmios.reason ? { reason: ogmios.reason } : {}) },
       network: network.name,
       apiUrl: network.apiUrl,
       chainReachable: reachable,
