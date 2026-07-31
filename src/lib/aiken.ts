@@ -45,11 +45,6 @@ export function notInstalled(): AdaError {
 
 export interface AikenResult {
   /**
-   * Empty by design — see {@link runAiken}. Aiken's diagnostics go straight to
-   * the user's terminal rather than through us.
-   */
-  output: string;
-  /**
    * Aiken's own machine-readable result, when it produces one.
    *
    * `aiken check` writes a JSON report to **stdout** whenever stdout is not a
@@ -118,7 +113,6 @@ export function runAiken(args: string[], cwd: string, opts: { json?: boolean } =
     throw new AdaError('aiken_failed', `could not run aiken: ${r.error.message}`, EXIT_CHAIN_REJECTED);
   }
 
-  const output = '';
   const report = parseReport(r.stdout ?? '');
 
   if (r.status !== 0) {
@@ -135,7 +129,7 @@ export function runAiken(args: string[], cwd: string, opts: { json?: boolean } =
         : 'the compiler printed the diagnostic above');
   }
 
-  return { output, report, version };
+  return { report, version };
 }
 
 /**
@@ -166,16 +160,4 @@ function parseReport(stdout: string): AikenReport | undefined {
     // Not fatal: the diagnostics on stderr are the useful half either way.
     return undefined;
   }
-}
-
-/**
- * Error and warning counts from the diagnostics stream.
- *
- * `aiken build` produces no JSON report — only `check` does — so this scrapes the
- * summary line it prints. Used as a supplement to the report, never instead of it.
- */
-export function parseSummary(output: string): { errors: number; warnings: number } | undefined {
-  const m = output.match(/Summary\s+(\d+)\s+error(?:s)?,\s+(\d+)\s+warning/i);
-  if (!m) return undefined;
-  return { errors: Number(m[1]), warnings: Number(m[2]) };
 }

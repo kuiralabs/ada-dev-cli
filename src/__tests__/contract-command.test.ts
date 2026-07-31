@@ -9,6 +9,8 @@ import { describe, it, expect } from 'vitest';
 import { parseArgs } from '../lib/argv.ts';
 import { AdaError } from '../lib/errors.ts';
 import { requiredCollateral } from '../lib/tx-common.ts';
+import { parseSignedQuantity } from '../lib/amount.ts';
+import { readFileSync } from 'node:fs';
 import contract, { datumModeOf } from '../commands/contract.ts';
 import type { UTxO } from '@meshsdk/core';
 import { TOOLS, CONSENT_TOOLS, byName } from '../lib/mcp/tools.ts';
@@ -248,5 +250,68 @@ describe('the datum encoding decides how it must be supplied back', () => {
     } catch (e) {
       expect((e as AdaError).code).toBe('no_datum');
     }
+  });
+});
+
+describe('simulate and unlock cannot drift apart', () => {
+  // simulate exists to answer "what will unlock cost". If the two ever built
+  // different transactions it would report a number for something nobody
+  // submits — a confident wrong answer, which is worse than none. They share one
+  // builder so divergence is impossible rather than merely unlikely; this pins
+  // that they still do.
+  const source = readFileSync(new URL('../commands/contract.ts', import.meta.url), 'utf8');
+
+  it('both call the one shared builder', () => {
+    const callers = [...source.matchAll(/await buildSpend\(/g)];
+    expect(callers).toHaveLength(2);
+  });
+
+  it('neither assembles a spending transaction of its own', () => {
+    // Exactly one place may wire up spendingPlutusScript for a spend.
+    const spends = [...source.matchAll(/\.spendingPlutusScript\(/g)];
+    expect(spends).toHaveLength(1);
+  });
+
+  it('every script path pledges collateral through one helper', () => {
+    // Three commands run scripts. The amount and the selection rule must be the
+    // same for all of them, or a transaction that simulates fine fails to build.
+    expect([...source.matchAll(/selectCollateral\(/g)]).toHaveLength(1);
+    expect([...source.matchAll(/pledgeCollateral\(/g)].length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('quantities carry an operation in their sign', () => {
+  // The ledger expresses burning as a negative mint, so the sign IS the
+  // operation. `asset mint` rejects negatives because it only creates supply;
+  // a Plutus policy does both through one field.
+  it('accepts a positive quantity', () => {
+    expect(parseSignedQuantity('100')).toBe(100n);
+  });
+
+  it('accepts a negative quantity, which burns', () => {
+    expect(parseSignedQuantity('-1')).toBe(-1n);
+  });
+
+  it('rejects a typo as user error, not internal error', () => {
+    // `--qty abc` reached BigInt() raw and surfaced as
+    // "internal_error: Cannot convert abc to a BigInt", blaming the tool for
+    // the user's typo.
+    try { parseSignedQuantity('abc'); expect.unreachable(); } catch (e) {
+      expect((e as AdaError).code).toBe('invalid_args');
+      expect((e as AdaError).message).toContain('abc');
+    }
+  });
+
+  it('rejects a fraction, since native assets are indivisible', () => {
+    expect(() => parseSignedQuantity('1.5')).toThrow(/not a valid quantity/);
+  });
+
+  it('rejects zero, which is neither a mint nor a burn', () => {
+    expect(() => parseSignedQuantity('0')).toThrow(/may not be zero/);
+    expect(() => parseSignedQuantity('-0')).toThrow(/may not be zero/);
+  });
+
+  it('tolerates underscores and surrounding space', () => {
+    expect(parseSignedQuantity(' 1_000 ')).toBe(1000n);
   });
 });

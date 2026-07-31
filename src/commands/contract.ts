@@ -16,11 +16,13 @@ import { usageError, AdaError } from '../lib/errors.ts';
 import { EXIT_CHAIN_REJECTED } from '../lib/exit-codes.ts';
 import { writeJson } from '../lib/json-output.ts';
 import { openActive, type ActiveContext } from '../lib/active-wallet.ts';
-import { makeTxBuilder, makeEvaluator, withoutCostModelNoise } from '../lib/mesh.ts';
+import { makeTxBuilder, makeEvaluator, withoutCostModelNoise, type Provider } from '../lib/mesh.ts';
 import { signAndSubmit, translateBuildFailure, selectCollateral, requiredCollateral, assertMeetsMinValue } from '../lib/tx-common.ts';
-import { adaToLovelace, formatAda, LOVELACE_UNIT } from '../lib/amount.ts';
+import { adaToLovelace, formatAda, parseSignedQuantity, LOVELACE_UNIT } from '../lib/amount.ts';
+import { assertAssetName } from './asset.ts';
 import {
   loadBlueprint, selectValidator, scriptIdentity, scriptBytes, parseParams,
+  type ScriptIdentity,
   splitTitle, listNames, handlersOf,
   type BlueprintValidator, type LoadedBlueprint,
 } from '../lib/blueprint.ts';
@@ -317,6 +319,98 @@ const mesh = async () => (meshData ??= await import('@meshsdk/core'));
 const pubKeyHashOf = async (ctx: ActiveContext): Promise<string> =>
   (await mesh()).deserializeAddress(ctx.payment).pubKeyHash;
 
+
+// ── the spend, built once ────────────────────────────────────────────
+//
+// `unlock` and `simulate` must produce the **same** transaction. Simulate exists
+// to answer "what will unlock cost", so if the two ever built different things it
+// would be reporting a number for a transaction nobody submits — a wrong answer
+// delivered confidently, which is worse than no answer. Building it in one place
+// makes divergence impossible rather than merely unlikely.
+
+interface SpendContext {
+  identity: ScriptIdentity;
+  code: string;
+  target: UTxO;
+  redeemer: { value: unknown; describe: string };
+  datumMode: { inline: boolean; value?: unknown };
+  collateral: UTxO;
+  utxos: UTxO[];
+  protocol: Awaited<ReturnType<Provider['fetchProtocolParameters']>>;
+  evaluator: Awaited<ReturnType<typeof makeEvaluator>>;
+}
+
+/** Everything a script spend needs, resolved once. */
+async function prepareSpend(args: Args, ctx: ActiveContext): Promise<SpendContext> {
+  const loaded = open(args);
+  const validator = selectValidator(loaded, selection(args));
+  const params = parseParams(flagValue(args, 'params'));
+  const identity = scriptIdentity(loaded, validator, ctx.network.name, params);
+  const code = scriptBytes(validator, params);
+
+  // Argument validation before any network call. A missing or malformed redeemer
+  // is knowable without asking a chain anything, and making someone wait for a
+  // round trip to be told they forgot a flag is both slower and less clear.
+  const redeemer = await buildRedeemer(args);
+  const target = await resolveScriptUtxo(args, ctx, identity.address);
+
+  // How the datum is stored decides how it must be supplied back. An inline datum
+  // (CIP-32) travels on the output and the builder just points at it; a datum
+  // stored as a hash was never published, so the spender must already hold it.
+  const datumMode = datumModeOf(target, flagValue(args, 'datum'));
+
+  const utxos = await ctx.wallet.getUtxos();
+  const protocol = await ctx.provider.fetchProtocolParameters();
+  const collateral = pledgeCollateral(utxos, protocol);
+  const evaluator = await makeEvaluator(ctx.provider, ctx.network);
+
+  return { identity, code, target, redeemer, datumMode, collateral, utxos, protocol, evaluator };
+}
+
+/** Build the spending transaction. One definition, two callers. */
+async function buildSpend(ctx: ActiveContext, spend: SpendContext): Promise<string> {
+  const signerHash = await pubKeyHashOf(ctx);
+  try {
+    const b = makeTxBuilder(ctx.provider, { withScripts: true, evaluator: spend.evaluator })
+      .spendingPlutusScript(spend.identity.version)
+      .txIn(spend.target.input.txHash, spend.target.input.outputIndex,
+            spend.target.output.amount, spend.target.output.address)
+      .txInScript(spend.code)
+      .txInRedeemerValue(spend.redeemer.value as never);
+
+    if (spend.datumMode.inline) b.txInInlineDatumPresent();
+    else b.txInDatumValue(spend.datumMode.value as never);
+
+    return await withoutCostModelNoise(() => b
+      // Validators commonly check for a signature; supplying it is harmless when
+      // they do not, and the transaction is unprovable without it when they do.
+      .requiredSignerHash(signerHash)
+      .txInCollateral(spend.collateral.input.txHash, spend.collateral.input.outputIndex,
+                      spend.collateral.output.amount, spend.collateral.output.address)
+      .changeAddress(ctx.payment)
+      .selectUtxosFrom(spend.utxos)
+      .complete());
+  } catch (err) {
+    throw translateScriptFailure(err, spend.identity.address);
+  }
+}
+
+/**
+ * Choose a UTxO to pledge as collateral, sized from the chain's own fee model.
+ *
+ * Shared by every command that runs a script, so the amount and the selection
+ * rule cannot drift between them.
+ */
+function pledgeCollateral(
+  utxos: UTxO[],
+  protocol: { minFeeA: number; minFeeB: number; maxTxSize: number; collateralPercent: number },
+): UTxO {
+  return selectCollateral(utxos, requiredCollateral({
+    minFeeA: protocol.minFeeA, minFeeB: protocol.minFeeB,
+    maxTxSize: protocol.maxTxSize, collateralPercent: protocol.collateralPercent,
+  }));
+}
+
 // ── unlock ───────────────────────────────────────────────────────────
 //
 // Spend a UTxO sitting at a script address, supplying a redeemer. **This is the
@@ -326,66 +420,9 @@ const pubKeyHashOf = async (ctx: ActiveContext): Promise<string> =>
 
 async function unlock(args: Args): Promise<void> {
   const ctx = await openActive(args);
-  const loaded = open(args);
-  const validator = selectValidator(loaded, selection(args));
-  const params = parseParams(flagValue(args, 'params'));
-  const identity = scriptIdentity(loaded, validator, ctx.network.name, params);
-  const code = scriptBytes(validator, params);
-
-  // Argument validation before any network call. A missing or malformed redeemer
-  // is knowable without asking a chain anything, and making someone wait for a
-  // round trip to be told they forgot a flag is both slower and less clear —
-  // they get "4 UTxOs sit at the script address" when the real problem is that
-  // --redeemer was never passed.
-  const redeemer = await buildRedeemer(args);
-  const target = await resolveScriptUtxo(args, ctx, identity.address);
-
-  const signerHash = await pubKeyHashOf(ctx);
-  const utxos = await ctx.wallet.getUtxos();
-  const protocol = await ctx.provider.fetchProtocolParameters();
-  // Collateral is only forfeited when a script fails after the cheap checks pass,
-  // and it must be pure ADA. Selected explicitly because nothing selects it for
-  // you, and because once a wallet holds native assets the obvious candidates
-  // stop qualifying — a failure that looks nothing like its cause. The amount is
-  // derived from the chain's own fee model, not chosen.
-  const collateral = selectCollateral(utxos, requiredCollateral({
-    minFeeA: protocol.minFeeA, minFeeB: protocol.minFeeB,
-    maxTxSize: protocol.maxTxSize, collateralPercent: protocol.collateralPercent,
-  }));
-
-  // The evaluator runs the Plutus VM to discover the execution budget this script
-  // needs, because the ledger requires that budget declared up front.
-  const evaluator = await makeEvaluator(ctx.provider, ctx.network);
-
-  // How the datum is stored decides how it must be supplied back. An inline datum
-  // (CIP-32) travels on the output and the builder just points at it; a datum
-  // stored as a hash was never published, so the spender must already hold it and
-  // pass it explicitly. Assuming inline fails confusingly on the second kind.
-  const datumMode = datumModeOf(target, flagValue(args, 'datum'));
-
-  let unsigned: string;
-  try {
-    const b = makeTxBuilder(ctx.provider, { withScripts: true, evaluator })
-      .spendingPlutusScript(identity.version)
-      .txIn(target.input.txHash, target.input.outputIndex, target.output.amount, target.output.address)
-      .txInScript(code)
-      .txInRedeemerValue(redeemer.value as never);
-
-    if (datumMode.inline) b.txInInlineDatumPresent();
-    else b.txInDatumValue(datumMode.value as never);
-
-    unsigned = await withoutCostModelNoise(() => b
-      // Validators commonly check for a signature; supplying it is harmless when
-      // they do not, and the transaction is unprovable without it when they do.
-      .requiredSignerHash(signerHash)
-      .txInCollateral(collateral.input.txHash, collateral.input.outputIndex,
-                      collateral.output.amount, collateral.output.address)
-      .changeAddress(ctx.payment)
-      .selectUtxosFrom(utxos)
-      .complete());
-  } catch (err) {
-    throw translateScriptFailure(err, identity.address);
-  }
+  const spend = await prepareSpend(args, ctx);
+  const { identity, target, redeemer, datumMode, collateral } = spend;
+  const unsigned = await buildSpend(ctx, spend);
 
   const submitted = hasFlag(args, 'yes');
   const txHash = submitted ? await signAndSubmit(ctx, unsigned) : null;
@@ -395,11 +432,11 @@ async function unlock(args: Args): Promise<void> {
     writeJson({
       network: ctx.network.name, wallet: ctx.stored.name,
       scriptAddress: identity.address, scriptHash: identity.hash,
-      spending: `${target.input.txHash}#${target.input.outputIndex}`,
+      spending: refOf(target),
       ada: formatAda(BigInt(recovered)), lovelace: recovered,
       redeemer: redeemer.describe,
       datumEncoding: datumMode.inline ? 'inline' : 'hash',
-      collateral: `${collateral.input.txHash}#${collateral.input.outputIndex}`,
+      collateral: refOf(collateral),
       submitted, ...(txHash ? { txHash } : {}),
     });
     return;
@@ -409,10 +446,10 @@ async function unlock(args: Args): Promise<void> {
   process.stderr.write(fields([
     ['network', ctx.network.name],
     ['to', ctx.stored.name],
-    ['spending', `${target.input.txHash.slice(0, 16)}…#${target.input.outputIndex}`],
+    ['spending', shortRef(target)],
     ['amount', `${formatAda(BigInt(recovered))} ADA`],
     ['redeemer', redeemer.describe],
-    ['collateral', `${collateral.input.txHash.slice(0, 16)}…#${collateral.input.outputIndex}`],
+    ['collateral', shortRef(collateral)],
   ]) + '\n');
   if (!submitted) {
     process.stderr.write('\n' + dim('  Nothing submitted. Add --yes to send it.') + '\n');
@@ -448,6 +485,7 @@ async function resolveScriptUtxo(args: Args, ctx: ActiveContext, scriptAddress: 
 }
 
 const refOf = (u: UTxO): string => `${u.input.txHash}#${u.input.outputIndex}`;
+const shortRef = (u: UTxO): string => `${u.input.txHash.slice(0, 16)}…#${u.input.outputIndex}`;
 
 /**
  * Decide how to hand the datum back to the validator.
@@ -576,7 +614,7 @@ async function utxos(args: Args): Promise<void> {
     const out = u.output as { plutusData?: string | null; dataHash?: string | null };
     const lovelace = u.output.amount.find((a) => a.unit === LOVELACE_UNIT)?.quantity ?? '0';
     return {
-      ref: `${u.input.txHash}#${u.input.outputIndex}`,
+      ref: refOf(u),
       lovelace,
       ada: formatAda(BigInt(lovelace)),
       assets: u.output.amount.filter((a) => a.unit !== LOVELACE_UNIT)
@@ -638,45 +676,11 @@ async function utxos(args: Args): Promise<void> {
 
 async function simulate(args: Args): Promise<void> {
   const ctx = await openActive(args);
-  const loaded = open(args);
-  const validator = selectValidator(loaded, selection(args));
-  const params = parseParams(flagValue(args, 'params'));
-  const identity = scriptIdentity(loaded, validator, ctx.network.name, params);
-  const code = scriptBytes(validator, params);
-
-  const redeemer = await buildRedeemer(args);
-  const target = await resolveScriptUtxo(args, ctx, identity.address);
-  const datumMode = datumModeOf(target, flagValue(args, 'datum'));
-
-  const signerHash = await pubKeyHashOf(ctx);
-  const utxos = await ctx.wallet.getUtxos();
-  const protocol = await ctx.provider.fetchProtocolParameters();
-  const collateral = selectCollateral(utxos, requiredCollateral({
-    minFeeA: protocol.minFeeA, minFeeB: protocol.minFeeB,
-    maxTxSize: protocol.maxTxSize, collateralPercent: protocol.collateralPercent,
-  }));
-  const evaluator = await makeEvaluator(ctx.provider, ctx.network);
-
-  let unsigned: string;
-  try {
-    const b = makeTxBuilder(ctx.provider, { withScripts: true, evaluator })
-      .spendingPlutusScript(identity.version)
-      .txIn(target.input.txHash, target.input.outputIndex, target.output.amount, target.output.address)
-      .txInScript(code)
-      .txInRedeemerValue(redeemer.value as never);
-    if (datumMode.inline) b.txInInlineDatumPresent();
-    else b.txInDatumValue(datumMode.value as never);
-
-    unsigned = await withoutCostModelNoise(() => b
-      .requiredSignerHash(signerHash)
-      .txInCollateral(collateral.input.txHash, collateral.input.outputIndex,
-                      collateral.output.amount, collateral.output.address)
-      .changeAddress(ctx.payment)
-      .selectUtxosFrom(utxos)
-      .complete());
-  } catch (err) {
-    throw translateScriptFailure(err, identity.address);
-  }
+  const spend = await prepareSpend(args, ctx);
+  const { identity, target, protocol, evaluator } = spend;
+  // The very same transaction `unlock` would submit — that is what makes the
+  // number below an answer about unlock rather than about something adjacent.
+  const unsigned = await buildSpend(ctx, spend);
 
   // Ask the evaluator directly. The builder already used it to fill in the
   // budget; this is the same question asked so the number can be reported.
@@ -834,9 +838,10 @@ async function mint(args: Args): Promise<void> {
 
   const name = flagValue(args, 'name');
   if (!name) throw usageError('mint needs --name <asset-name>', 'example: --name GiftCard');
-  const qtyRaw = flagValue(args, 'qty') ?? '1';
-  const quantity = BigInt(qtyRaw);
-  if (quantity === 0n) throw usageError('--qty may not be zero', 'positive mints, negative burns');
+  // The ledger caps an asset name at 32 bytes. Shared with `asset mint` so both
+  // reject the same names, rather than one of them discovering it on-chain.
+  assertAssetName(name);
+  const quantity = parseSignedQuantity(flagValue(args, 'qty') ?? '1');
 
   const redeemer = await buildRedeemer(args);
   const { stringToHex } = await mesh();
@@ -848,10 +853,7 @@ async function mint(args: Args): Promise<void> {
 
   const utxos = await ctx.wallet.getUtxos();
   const protocol = await ctx.provider.fetchProtocolParameters();
-  const collateral = selectCollateral(utxos, requiredCollateral({
-    minFeeA: protocol.minFeeA, minFeeB: protocol.minFeeB,
-    maxTxSize: protocol.maxTxSize, collateralPercent: protocol.collateralPercent,
-  }));
+  const collateral = pledgeCollateral(utxos, protocol);
   const evaluator = await makeEvaluator(ctx.provider, ctx.network);
 
   // A one-shot policy commonly requires a specific UTxO be spent, which is what

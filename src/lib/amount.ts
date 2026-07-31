@@ -86,3 +86,27 @@ export function sumLovelace(assets: ReadonlyArray<{ unit: string; quantity: stri
     .filter((a) => a.unit === LOVELACE_UNIT || a.unit === '')
     .reduce((total, a) => total + BigInt(a.quantity), 0n);
 }
+
+/**
+ * A native-asset quantity that may be negative.
+ *
+ * `asset mint` rejects negatives deliberately — it only ever creates supply. A
+ * Plutus policy is different: the ledger expresses burning as a *negative mint*,
+ * so the same field carries both operations and the sign is the operation.
+ *
+ * Written here rather than reaching for `BigInt()` because a typo should say so:
+ * `--qty abc` reached the raw constructor and surfaced as "internal_error:
+ * Cannot convert abc to a BigInt", which blames the tool for the user's typo.
+ */
+export function parseSignedQuantity(raw: string): bigint {
+  const cleaned = raw.trim().replace(/_/g, '');
+  if (!/^-?\d+$/.test(cleaned)) {
+    throw usageError(`not a valid quantity: ${raw}`,
+      'a whole number; negative burns, positive mints');
+  }
+  const value = BigInt(cleaned);
+  if (value === 0n) {
+    throw usageError('quantity may not be zero', 'positive mints, negative burns');
+  }
+  return value;
+}

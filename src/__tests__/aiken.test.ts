@@ -10,7 +10,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runAiken, resolveAikenBin, notInstalled, parseSummary } from '../lib/aiken.ts';
+import { runAiken, resolveAikenBin, notInstalled } from '../lib/aiken.ts';
 import { AdaError } from '../lib/errors.ts';
 
 afterEach(() => { delete process.env.ADA_AIKEN_BIN; });
@@ -122,19 +122,5 @@ describe('reading the machine-readable report', () => {
     useFake(`echo '{"summary":{"total":1,"passed":1,"failed":0}}'`);
     const project = mkdtempSync(join(tmpdir(), 'proj-'));
     expect(runAiken(['check'], project).report?.summary?.passed).toBe(1);
-  });
-});
-
-describe('the human summary line', () => {
-  it('reads counts from the terminal-shaped summary', () => {
-    expect(parseSummary('    Summary 1 error, 0 warnings')).toEqual({ errors: 1, warnings: 0 });
-  });
-
-  it('handles the plural form', () => {
-    expect(parseSummary('Summary 0 errors, 2 warnings')).toEqual({ errors: 0, warnings: 2 });
-  });
-
-  it('returns undefined when there is no summary to read', () => {
-    expect(parseSummary('Compiling aiken-lang/hello_world')).toBeUndefined();
   });
 });
