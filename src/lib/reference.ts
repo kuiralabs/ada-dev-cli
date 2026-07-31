@@ -203,7 +203,12 @@ export const COMMANDS: CommandDoc[] = [
       + 'VM in JavaScript, the node\'s from the implementation that will judge the transaction. '
       + 'Neither is required and neither can fail an operation: Ogmios is used where reachable, found '
       + 'via `ADA_OGMIOS_URL` or the devkit\'s default port on a local chain, and its absence is '
-      + 'reported rather than assumed.',
+      + 'reported rather than assumed.\n\n'
+      + '`unlock --mint` builds a spend and a mint in **one** transaction, under this validator\'s '
+      + 'own policy. Some validators require exactly that — releasing funds only if a token is '
+      + 'issued alongside makes the release and the token inseparable, so neither half is valid '
+      + 'alone and building them separately cannot express it. The mint handler takes its own '
+      + 'redeemer, which is usually a different type from the spend\'s.',
     flags: [
       { flag: '--blueprint <path>', description: 'path to plutus.json, or a directory holding one' },
       { flag: '--module <name>', description: 'module to select when several validators exist' },
@@ -228,6 +233,8 @@ export const COMMANDS: CommandDoc[] = [
       { flag: '--valid-for <duration>', description: 'window length from the chain tip, e.g. 30m' },
       { flag: '--cross-check', description: 'ask cardano-cli for the same script hash (address)' },
       { flag: '--verify-budget', description: 'ask a node for the same execution units (simulate)' },
+      { flag: '--mint <name>:<qty>', description: 'mint in the same transaction as the spend (unlock)' },
+      { flag: '--mint-redeemer <json>', description: 'the mint handler\'s own redeemer' },
     ],
     examples: [
       'ada contract build',

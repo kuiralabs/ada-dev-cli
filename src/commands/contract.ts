@@ -368,6 +368,23 @@ const pubKeyHashOf = async (ctx: ActiveContext): Promise<string> =>
 // delivered confidently, which is worse than no answer. Building it in one place
 // makes divergence impossible rather than merely unlikely.
 
+/**
+ * A mint carried by the same transaction as a spend.
+ *
+ * Common enough to be a shape rather than an edge case: a validator that
+ * releases funds only if a token is issued in the same transaction makes the
+ * release and the token inseparable — nobody can take the reward without also
+ * being credited, and nobody can be credited without earning it. Building the
+ * two separately cannot express it, because each transaction would fail on its
+ * own.
+ */
+interface MintAlong {
+  assetName: string;
+  quantity: bigint;
+  redeemer: unknown;
+  describe: string;
+}
+
 interface SpendContext {
   identity: ScriptIdentity;
   code: string;
@@ -380,6 +397,8 @@ interface SpendContext {
   evaluator: Awaited<ReturnType<typeof makeEvaluator>>;
   /** The chain's, for the script integrity hash the ledger checks. */
   costModels?: number[][];
+  /** Set when --mint asks the same transaction to issue a token. */
+  mintAlong?: MintAlong;
   extras: TxExtras;
 }
 
@@ -511,8 +530,9 @@ async function prepareSpend(args: Args, ctx: ActiveContext): Promise<SpendContex
   const evaluator = await makeEvaluator(ctx.provider, ctx.network);
   const { models: costModels } = await costModelsFor(ctx.network);
   const extras = await anchorValidity(extraFlags, ctx);
+  const mintAlong = await readMintAlong(args, loaded, validator);
 
-  return { identity, code, target, redeemer, datumMode, collateral, utxos, protocol, evaluator, costModels, extras };
+  return { identity, code, target, redeemer, datumMode, collateral, utxos, protocol, evaluator, costModels, mintAlong, extras };
 }
 
 /** Build the spending transaction. One definition, two callers. */
@@ -528,6 +548,15 @@ async function buildSpend(ctx: ActiveContext, spend: SpendContext): Promise<stri
 
     if (spend.datumMode.inline) b.txInInlineDatumPresent();
     else b.txInDatumValue(spend.datumMode.value as never);
+
+    // The mint rides along in the same transaction, under this validator's own
+    // policy — which for a script is simply its hash.
+    if (spend.mintAlong) {
+      b.mintPlutusScript(spend.identity.version)
+        .mint(spend.mintAlong.quantity.toString(), spend.identity.hash, spend.mintAlong.assetName)
+        .mintingScript(spend.code)
+        .mintRedeemerValue(spend.mintAlong.redeemer as never);
+    }
 
     applyExtras(b, spend.extras);
 
@@ -591,6 +620,7 @@ async function unlock(args: Args): Promise<void> {
       ...(describeWindow(spend.extras.validity) ? { validity: describeWindow(spend.extras.validity) } : {}),
       ...(spend.extras.readOnly.length ? { readOnly: spend.extras.readOnly.map((r) => `${r.txHash}#${r.index}`) } : {}),
       ...(spend.extras.signers.length ? { requiredSigners: spend.extras.signers } : {}),
+      ...(spend.mintAlong ? { minted: spend.mintAlong.describe, policyId: spend.identity.hash } : {}),
       collateral: refOf(collateral),
       submitted, ...(txHash ? { txHash } : {}),
     });
@@ -605,6 +635,7 @@ async function unlock(args: Args): Promise<void> {
     ['amount', `${formatAda(BigInt(recovered))} ADA`],
     ['redeemer', redeemer.describe],
     ['collateral', shortRef(collateral)],
+    ...(spend.mintAlong ? [['minted', spend.mintAlong.describe] as [string, string]] : []),
   ]) + '\n');
   if (!submitted) {
     process.stderr.write('\n' + dim('  Nothing submitted. Add --yes to send it.') + '\n');
@@ -1131,4 +1162,59 @@ async function mint(args: Args): Promise<void> {
   }
   process.stderr.write('\n');
   process.stdout.write(txHash + '\n');
+}
+
+
+/**
+ * Read `--mint <name>:<qty>`, for a spend that must also issue a token.
+ *
+ * The policy is not asked for: it is this validator's own hash, because the
+ * mint handler and the spend handler are the same script. That is exactly the
+ * relationship that makes a circular `--policy` parameter impossible, and the
+ * reason the validator reads its own hash off the input it is spending.
+ */
+async function readMintAlong(
+  args: Args, loaded: LoadedBlueprint, validator: BlueprintValidator,
+): Promise<MintAlong | undefined> {
+  const spec = flagValue(args, 'mint');
+  if (!spec) return undefined;
+
+  const at = spec.lastIndexOf(':');
+  if (at <= 0) {
+    throw usageError(`--mint expects <name>:<quantity>, got: ${spec}`,
+      'for example --mint Badge:1, or --mint Badge:-1 to burn');
+  }
+  const name = spec.slice(0, at);
+  const quantity = parseSignedQuantity(spec.slice(at + 1));
+  assertAssetName(name);
+
+  const raw = flagValue(args, 'mint-redeemer');
+  if (!raw) {
+    throw usageError('--mint needs --mint-redeemer',
+      'the mint handler takes its own redeemer, separate from the spend\'s');
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw usageError(`--mint-redeemer is not valid JSON: ${(err as Error).message}`);
+  }
+
+  // The mint handler declares its own redeemer shape, which is usually a
+  // different type from the spend's — checking against the spend's would reject
+  // a correct value.
+  const mintHandler = selectValidator(loaded, {
+    module: splitTitle(validator.title).module,
+    validator: splitTitle(validator.title).validator,
+    handler: 'mint',
+  });
+  checkAgainstSchema(parsed, mintHandler.redeemer?.schema, loaded, '--mint-redeemer');
+
+  const { stringToHex } = await mesh();
+  return {
+    assetName: stringToHex(name),
+    quantity,
+    redeemer: parsed,
+    describe: `${quantity} × ${name}`,
+  };
 }
