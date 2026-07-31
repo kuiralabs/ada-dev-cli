@@ -124,3 +124,57 @@ describe('reading the machine-readable report', () => {
     expect(runAiken(['check'], project).report?.summary?.passed).toBe(1);
   });
 });
+
+describe('a project built by a compiler it does not declare', () => {
+  // aiken.toml accepts a `compiler` field and Aiken warns on a mismatch, but it
+  // builds anyway — and the compiler changes the script hash. hello-world is
+  // 167f56e1… under v1.1.0 and 61862d97… under v1.1.23 from identical source, so
+  // a mismatch means the blueprint addresses somewhere the project never asked
+  // for.
+  //
+  // The warning is also invisible exactly where it matters: Aiken renders
+  // warnings only to a terminal, so in --json mode, with stdout piped, it is
+  // never emitted and the build reports success.
+  const project = (toml: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'ada-toml-'));
+    writeFileSync(join(dir, 'aiken.toml'), toml);
+    return dir;
+  };
+
+  it('reads the declared compiler out of aiken.toml', async () => {
+    const { declaredCompiler } = await import('../lib/aiken.ts');
+    const dir = project('name = "x/y"\ncompiler = "v1.1.0"\nplutus = "v3"\n');
+    expect(declaredCompiler(dir)).toBe('v1.1.0');
+  });
+
+  it('accepts either quote style, since aiken new emits one and hand edits the other', async () => {
+    const { declaredCompiler } = await import('../lib/aiken.ts');
+    expect(declaredCompiler(project("name = 'x/y'\ncompiler = 'v1.1.23'\n"))).toBe('v1.1.23');
+  });
+
+  it('says nothing when a project declares no compiler', async () => {
+    const { declaredCompiler } = await import('../lib/aiken.ts');
+    expect(declaredCompiler(project('name = "x/y"\nplutus = "v3"\n'))).toBeUndefined();
+  });
+
+  it('reports a mismatch through runAiken', () => {
+    const dir = project('name = "x/y"\ncompiler = "v1.1.0"\n');
+    useFake('exit 0');
+    // The fake answers --version with v0.0.0-fake, which is not v1.1.0.
+    const r = runAiken(['build'], dir);
+    expect(r.mismatch?.declared).toBe('v1.1.0');
+  });
+
+  it('stays quiet when the versions agree', () => {
+    const dir = project('name = "x/y"\ncompiler = "v0.0.0"\n');
+    useFake('exit 0');
+    expect(runAiken(['build'], dir).mismatch).toBeUndefined();
+  });
+
+  it('ignores the build suffix, which is not part of the version', () => {
+    // `aiken --version` answers "aiken v1.1.23+8949565"; a declaration is bare.
+    const dir = project('name = "x/y"\ncompiler = "v0.0.0"\n');
+    useFake('exit 0');
+    expect(runAiken(['build'], dir).mismatch).toBeUndefined();
+  });
+});

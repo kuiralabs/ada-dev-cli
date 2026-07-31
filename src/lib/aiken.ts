@@ -6,7 +6,7 @@
 // to make it convenient, not to reimplement it and disagree.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { toolMissingError, AdaError } from './errors.ts';
@@ -54,6 +54,27 @@ export interface AikenResult {
    */
   report?: AikenReport;
   version: string;
+  /** Set when the project declares a compiler it was not built with. */
+  mismatch?: CompilerMismatch;
+}
+
+/**
+ * A project built by a compiler other than the one it declares.
+ *
+ * `aiken.toml` accepts a `compiler` field, and Aiken warns on a mismatch — but
+ * **it builds anyway**, and the compiler demonstrably changes the script hash:
+ * hello-world is `167f56e1…` under v1.1.0 and `61862d97…` under v1.1.23, from
+ * identical source. So a mismatch means the blueprint addresses somewhere the
+ * project did not ask for.
+ *
+ * Worse, that warning is invisible where it matters most. Aiken renders warnings
+ * only to a terminal, so in `--json` mode — stdout piped — it is never emitted at
+ * all, and the build reports success. Both audiences currently miss it, which is
+ * why this is detected here rather than left to the compiler to mention.
+ */
+export interface CompilerMismatch {
+  declared: string;
+  running: string;
 }
 
 export interface AikenReport {
@@ -129,7 +150,32 @@ export function runAiken(args: string[], cwd: string, opts: { json?: boolean } =
         : 'the compiler printed the diagnostic above');
   }
 
-  return { report, version };
+  return { report, version, mismatch: compilerMismatch(cwd, version) };
+}
+
+/** The `compiler` field a project declares, if any. */
+export function declaredCompiler(cwd: string): string | undefined {
+  try {
+    const toml = readFileSync(join(cwd, 'aiken.toml'), 'utf8');
+    return toml.match(/^\s*compiler\s*=\s*["']([^"']+)["']/m)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+function compilerMismatch(cwd: string, running: string): CompilerMismatch | undefined {
+  const declared = declaredCompiler(cwd);
+  if (!declared) return undefined;
+
+  // `aiken --version` answers "aiken v1.1.23+8949565"; the declaration is "v1.1.23".
+  const runningVersion = running.match(/v?\d+\.\d+\.\d+/)?.[0];
+  const declaredVersion = declared.match(/v?\d+\.\d+\.\d+/)?.[0];
+  if (!runningVersion || !declaredVersion) return undefined;
+
+  const normalise = (v: string) => v.replace(/^v/, '');
+  return normalise(runningVersion) === normalise(declaredVersion)
+    ? undefined
+    : { declared, running };
 }
 
 /**

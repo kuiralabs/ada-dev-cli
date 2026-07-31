@@ -33,7 +33,7 @@ import {
 import { runAiken } from '../lib/aiken.ts';
 import { crossCheckScriptHash } from '../lib/cardano-cli.ts';
 import { probeOgmios, evaluateWithOgmios } from '../lib/ogmios.ts';
-import { fields, heading } from '../ui/format.ts';
+import { fields, heading, warn } from '../ui/format.ts';
 import { dim, bold } from '../ui/colors.ts';
 
 const SUBCOMMANDS = ['build', 'check', 'inspect', 'address', 'utxos', 'lock', 'unlock', 'simulate', 'publish', 'mint'] as const;
@@ -777,7 +777,7 @@ async function delegate(args: Args, subcommand: 'build' | 'check'): Promise<void
   // Both halves of aiken's output are collected — the JSON report, and the
   // diagnostic it renders only to a terminal. See runAiken.
   const wantsJson = hasFlag(args, 'json');
-  const { report, version } = runAiken([subcommand, ...extra], dir);
+  const { report, version, mismatch } = runAiken([subcommand, ...extra], dir);
   const tests = report?.summary;
 
   if (wantsJson) {
@@ -786,11 +786,21 @@ async function delegate(args: Args, subcommand: 'build' | 'check'): Promise<void
       compiler: version,
       directory: dir,
       ...(tests ? { tests: { total: tests.total, passed: tests.passed, failed: tests.failed } } : {}),
+      // Surfaced here because aiken's own warning is never emitted in this mode:
+      // it renders warnings only to a terminal, and --json pipes stdout.
+      ...(mismatch ? { compilerMismatch: mismatch } : {}),
       ...(subcommand === 'build' ? { blueprint: `${dir.replace(/\/$/, '')}/plutus.json` } : {}),
     });
     return;
   }
 
+  if (mismatch) {
+    process.stderr.write('\n' + warn(
+      `built with ${mismatch.running}, but aiken.toml declares ${mismatch.declared}`) + '\n');
+    process.stderr.write(dim('  The compiler changes the script hash, so this blueprint addresses '
+      + 'somewhere the project did not ask for.') + '\n');
+    process.stderr.write(dim(`  Switch with: aikup ${mismatch.declared}`) + '\n');
+  }
   if (subcommand === 'build') {
     process.stderr.write('\n' + dim('  Wrote plutus.json. Next: ada contract inspect') + '\n');
   }
