@@ -167,6 +167,37 @@ describe('contract, against a live devnet', () => {
     expect(still.utxos.some((u: any) => u.ref === `${lock.txHash}#0`)).toBe(true);
   }, 240_000);
 
+  chain()('simulates without submitting, and reports units within the chain limits', async () => {
+    const lock = ada(['contract', 'lock', '--blueprint', BLUEPRINT,
+      '--amount', '5', '--datum-signer', '--yes']);
+    await settle();
+
+    const sim = ada(['contract', 'simulate', '--blueprint', BLUEPRINT,
+      '--tx-in', `${lock.txHash}#0`, '--redeemer-message', 'Hello, World!']);
+    expect(sim.ok).toBe(true);
+    expect(sim.executionUnits.mem).toBeGreaterThan(0);
+    expect(sim.executionUnits.steps).toBeGreaterThan(0);
+    expect(sim.withinLimits).toBe(true);
+    expect(sim.executionUnits.mem).toBeLessThanOrEqual(sim.limits.maxMem);
+
+    // Simulating must not consume what it simulates against.
+    const still = ada(['contract', 'utxos', '--blueprint', BLUEPRINT]);
+    expect(still.utxos.some((u: any) => u.ref === `${lock.txHash}#0`)).toBe(true);
+  }, 240_000);
+
+  chain()('publishes a reference script the chain records', async () => {
+    const pub = ada(['contract', 'publish', '--blueprint', BLUEPRINT, '--yes']);
+    expect(pub.ok).toBe(true);
+    expect(pub.referenceInput).toMatch(/^[0-9a-f]{64}#\d+$/);
+    await settle();
+
+    // The chain must report a reference script whose hash is the validator's.
+    const res = await fetch(`http://localhost:8080/api/v1/addresses/${pub.referenceAddress}/utxos`);
+    const at = await res.json() as any[];
+    const ref = at.find((u) => `${u.tx_hash}#${u.output_index}` === pub.referenceInput);
+    expect(ref?.reference_script_hash).toBe(pub.scriptHash);
+  }, 240_000);
+
   chain()('names every UTxO when several sit at one script address', async () => {
     const at = ada(['contract', 'utxos', '--blueprint', BLUEPRINT]);
     if (at.count < 2) return; // needs an ambiguous state to be meaningful

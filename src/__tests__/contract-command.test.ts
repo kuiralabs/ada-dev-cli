@@ -98,21 +98,43 @@ describe('collateral is derived from the chain, not chosen', () => {
 describe('the agent surface covers every contract subcommand', () => {
   const names = TOOLS.filter((t) => t.command === 'contract').map((t) => t.name);
 
-  it('exposes all four', () => {
+  it('exposes every subcommand that an agent could want', () => {
     expect(names.sort()).toEqual([
-      'ada_contract_address', 'ada_contract_inspect', 'ada_contract_lock', 'ada_contract_unlock',
+      'ada_contract_address', 'ada_contract_inspect', 'ada_contract_lock',
+      'ada_contract_mint', 'ada_contract_publish', 'ada_contract_simulate',
+      'ada_contract_unlock',
     ]);
   });
 
-  it('gates both money paths behind consent', () => {
+  it('gates every money path behind consent', () => {
     // A --yes flag protects a human because a human types it deliberately. An
-    // agent would simply pass it, so lock and unlock must need a second call.
-    expect(CONSENT_TOOLS.has('ada_contract_lock')).toBe(true);
-    expect(CONSENT_TOOLS.has('ada_contract_unlock')).toBe(true);
+    // agent would simply pass it, so anything that spends must need a second call.
+    for (const n of ['ada_contract_lock', 'ada_contract_unlock',
+                     'ada_contract_publish', 'ada_contract_mint']) {
+      expect(CONSENT_TOOLS.has(n), `${n} must require consent`).toBe(true);
+    }
+  });
+
+  it('leaves simulate ungated, because it submits nothing', () => {
+    // The whole point of simulate is to answer "what will this cost" before
+    // committing. Requiring consent for a question defeats it.
+    expect(CONSENT_TOOLS.has('ada_contract_simulate')).toBe(false);
+    expect(byName('ada_contract_simulate')?.annotations?.readOnlyHint).toBe(true);
+  });
+
+  it('warns that a burn is permanent, and a default publish is unrecoverable', () => {
+    const burn = byName('ada_contract_mint')!.describeForConsent!({ name: 'X', qty: '-1' });
+    expect(burn).toMatch(/burn/i);
+    expect(burn).toMatch(/permanent/i);
+    const pub = byName('ada_contract_publish')!.describeForConsent!({});
+    expect(pub).toMatch(/nobody can spend|locked permanently/i);
+    const recoverable = byName('ada_contract_publish')!.describeForConsent!({ toSelf: true });
+    expect(recoverable).toMatch(/recoverable/i);
   });
 
   it('never marks a money path read-only', () => {
-    for (const n of ['ada_contract_lock', 'ada_contract_unlock']) {
+    for (const n of ['ada_contract_lock', 'ada_contract_unlock',
+                     'ada_contract_publish', 'ada_contract_mint']) {
       expect(byName(n)?.annotations?.readOnlyHint).not.toBe(true);
     }
   });
@@ -138,10 +160,15 @@ describe('the agent surface covers every contract subcommand', () => {
   });
 
   it('always passes --yes, since the second call is the consent', () => {
-    for (const n of ['ada_contract_lock', 'ada_contract_unlock']) {
-      const argv = byName(n)!.toArgv!({ ada: '5', redeemerMessage: 'hi' });
+    for (const n of ['ada_contract_lock', 'ada_contract_unlock',
+                     'ada_contract_publish', 'ada_contract_mint']) {
+      const argv = byName(n)!.toArgv!({ ada: '5', redeemerMessage: 'hi', name: 'X' });
       expect(argv).toContain('--yes');
     }
+  });
+
+  it('never passes --yes on simulate, which has nothing to confirm', () => {
+    expect(byName('ada_contract_simulate')!.toArgv!({ redeemerMessage: 'hi' })).not.toContain('--yes');
   });
 
   it('threads blueprint selection through to the command', () => {

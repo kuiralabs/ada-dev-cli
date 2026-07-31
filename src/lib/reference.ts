@@ -144,8 +144,8 @@ export const COMMANDS: CommandDoc[] = [
   },
   {
     name: 'contract',
-    usage: 'ada contract <build|check|inspect|address|utxos|lock|unlock>',
-    summary: 'Aiken validators — build, inspect, address, lock and unlock',
+    usage: 'ada contract <build|check|inspect|address|utxos|lock|unlock|simulate|publish|mint>',
+    summary: 'Aiken validators — build, inspect, lock, unlock, simulate, publish, mint',
     implemented: true,
     detail:
       'A Cardano validator is a pure predicate over (datum, redeemer, transaction). It holds no '
@@ -174,7 +174,19 @@ export const COMMANDS: CommandDoc[] = [
       + 'one. --datum-hash opts into that encoding anyway, since the reference Aiken example uses '
       + 'it and a UTxO made by another tool may carry one; unlocking such an output then requires '
       + 'the original datum via --datum. Collateral is chosen automatically from a pure-ADA output; '
-      + 'if every output in the wallet carries a native asset the error says how to make one.',
+      + 'if every output in the wallet carries a native asset the error says how to make one.\n\n'
+      + '`simulate` runs the validator and reports the execution units it needs against the chain\'s '
+      + 'limits, without submitting. The ledger requires that budget declared up front: too low and '
+      + 'the script aborts mid-run and the collateral is forfeited, too high and you overpay.\n\n'
+      + '`publish` writes a CIP-33 reference script — the validator\'s bytes parked in a UTxO so '
+      + 'later transactions point at them instead of each carrying a copy. It is the only operation '
+      + 'here that genuinely publishes code once, and the honest reading of "deploy". By default the '
+      + 'output sits at the script address where nobody can spend it, which is what makes the '
+      + 'reference dependable; --to-self keeps the ADA recoverable.\n\n'
+      + '`mint` mints or burns under a Plutus policy, where the script hash is the policy id. A '
+      + 'negative --qty burns. --spend names a UTxO the policy requires be consumed, which is how a '
+      + 'one-shot policy guarantees it can only ever mint once. `asset mint` remains the '
+      + 'native-script path for when you just want a token and have no contract.',
     flags: [
       { flag: '--blueprint <path>', description: 'path to plutus.json, or a directory holding one' },
       { flag: '--module <name>', description: 'module to select when several validators exist' },
@@ -188,6 +200,10 @@ export const COMMANDS: CommandDoc[] = [
       { flag: '--redeemer <json>', description: 'redeemer as Plutus data JSON (unlock)' },
       { flag: '--tx-in <hash>#<ix>', description: 'which script UTxO to spend when several exist' },
       { flag: '--path <dir>', description: 'project directory for build and check' },
+      { flag: '--name <text>', description: 'asset name (mint)' },
+      { flag: '--qty <n>', description: 'quantity; negative burns (mint)' },
+      { flag: '--spend <hash>#<ix>', description: 'UTxO the policy requires be consumed (mint)' },
+      { flag: '--to-self', description: 'park a reference script where it can be recovered (publish)' },
     ],
     examples: [
       'ada contract build',
@@ -199,6 +215,9 @@ export const COMMANDS: CommandDoc[] = [
       'ada contract address --module oneshot --validator gift_card --params \'["deadbeef"]\'',
       'ada contract lock --amount 5 --datum-signer --yes',
       'ada contract unlock --redeemer-message "Hello, World!" --yes',
+      'ada contract simulate --redeemer-message "Hello, World!"',
+      'ada contract publish --yes',
+      'ada contract mint --name GiftCard --qty 1 --redeemer \'{"alternative":0,"fields":[]}\' --yes',
     ],
   },
   {

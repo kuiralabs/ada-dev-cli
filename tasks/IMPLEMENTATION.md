@@ -6,7 +6,7 @@ worse than none, because it gets trusted.
 Legend: `[x]` done and exercised against a real chain · `[ ]` not built · `[—]` deliberately not
 building it, reason given · `[!]` blocked by something outside this repo.
 
-**Now:** 17 commands · 29 MCP tools · 270 offline tests + 7 devnet tests · stages 1–6 closed · stage 7 spine done
+**Now:** 17 commands · 32 MCP tools · 273 offline tests + 9 devnet tests · stages 1–6 closed · stage 7 spine done
 (`inspect`, `address`, `lock`, `unlock`, verified on devnet) · publish held.
 
 ---
@@ -88,8 +88,8 @@ Midnight verbs would name operations this chain does not have.
 - [x] **`contract lock`** — pay to a script address with a datum
 - [x] **`contract unlock`** — spend a script UTxO with a redeemer. This is the call
 - [x] **`contract utxos`** — what sits at the script address, each with its datum encoding. This is the state, and it is a listing rather than an object because a validator holds nothing
-- [ ] **`contract publish`** — a CIP-33 reference script: the only operation that genuinely publishes code once, and the honest reading of "deploy"
-- [ ] **`contract simulate`** — execution units without submitting, so a budget failure is found before a fee is paid
+- [x] **`contract publish`** — a CIP-33 reference script, the only operation that genuinely publishes code once. Parked at the script address by default, where nobody can spend it and the reference cannot be withdrawn; `--to-self` keeps the ADA recoverable. Verified: the chain reports a `reference_script_hash` matching the validator
+- [x] **`contract simulate`** — execution units, fee and transaction size against the chain's limits, submitting nothing. Read-only and ungated over MCP, because requiring consent to ask a question defeats it
 - [x] **Inline datums are the default, hash mode supported and proven** — no chain publishes the preimage of a hash-stored datum and the devnet indexer serves no lookup, so `unlock` demands the original up front rather than failing at spend time. Both branches verified on devnet: a `--datum-hash` lock, an unlock refused without `--datum`, and the same unlock succeeding with it
 - [x] **Collateral selected explicitly** — a pure-ADA UTxO, at 150% of fee. After any mint a wallet's outputs may all carry assets, and every script transaction then fails for a reason that looks nothing like its cause. The error must say how to make one
 - [x] **The script must be double-CBOR-wrapped before hashing** — proven on devnet: the blueprint's `compiledCode` hashes to a *different* address than `aiken blueprint address` reports. `applyParamsToScript` performs the wrapping, which is why the reference example calls it even with an empty parameter list. Omit it and the tool reports a wrong address confidently, and funds sent there are stranded until someone works out why
@@ -100,7 +100,7 @@ Midnight verbs would name operations this chain does not have.
 - [ ] **Mempool visibility** — the gap Ogmios would close that offline evaluation cannot: between submit and confirmation we currently cannot distinguish "accepted, waiting for a block" from "silently rejected". Worth having wherever it is reachable
 - [ ] **Report both gaps upstream** — `fetchCostModels` is trivially implementable for Koios and Yaci from endpoints already serving the data, which is a well-scoped MeshJS contribution. Yaci's evaluate endpoint failing on well-formed input is a bug report for bloxbean. Neither blocks us; both cost the next person the same day they cost us
 - [x] **Execution budget is its own error class** — exceeding the memory or step limit is neither insufficient funds nor an invalid transaction, and it is the failure a contract author hits most
-- [ ] **Oversized script names the remedy** — inlining a large validator breaches the transaction size limit, which is exactly what reference scripts exist to solve
+- [x] **Oversized script names the remedy** — `simulate` reports transaction size against `maxTxSize`, and `publish` exists as the answer when it does not fit
 - [x] **Plutus version read from the blueprint**, never assumed
 - [ ] **Datums and redeemers validated against the declared schema** — CIP-57 gives every argument a `dataType`, so a malformed value is rejected before a transaction is built, naming the expected shape. `mn` has to guess at this boundary; we do not
 - [x] **Blueprint discovery tolerates real layouts** — `plutus.json` sits at the project root only *by convention*, and `mn` carries a list of candidate directories precisely because projects that differ silently miss the scan. Plus `--module` and `--validator`, the axis `aiken` itself uses
@@ -112,7 +112,7 @@ Midnight verbs would name operations this chain does not have.
 - [ ] **Cross-checked against `cardano-cli`** — `aiken blueprint convert --to cardano-cli` emits the envelope it consumes, giving a second independent opinion on a script
 - [—] **Withdrawal and certificate validators** — the blueprint's `withdraw` and `publish` purposes. MeshJS supports both; out of scope for v1, recorded so the absence is a decision
 
-- [ ] **`contract mint`** — Plutus minting policies, decided rather than left open. `asset mint` stays the native-script path. The flag surfaces barely overlap — three shared against seven disjoint — and a command whose valid combinations form two non-overlapping sets is two commands wearing one name, which over MCP becomes a union schema an agent will call wrongly. The seam already exists downstream: `balance`, `asset send` and `swap` operate on `policyId + assetName` regardless of how a token was minted. How a token comes into existence is a policy question; what happens to it afterwards is an asset question
+- [x] **`contract mint`** — Plutus minting policies, kept separate from `asset mint`. `asset mint` stays the native-script path. The flag surfaces barely overlap — three shared against seven disjoint — and a command whose valid combinations form two non-overlapping sets is two commands wearing one name, which over MCP becomes a union schema an agent will call wrongly. The seam already exists downstream: `balance`, `asset send` and `swap` operate on `policyId + assetName` regardless of how a token was minted. How a token comes into existence is a policy question; what happens to it afterwards is an asset question
 
 ## 8 — Publish — held
 

@@ -28,7 +28,7 @@ import { runAiken } from '../lib/aiken.ts';
 import { fields, heading } from '../ui/format.ts';
 import { dim, bold } from '../ui/colors.ts';
 
-const SUBCOMMANDS = ['build', 'check', 'inspect', 'address', 'utxos', 'lock', 'unlock'] as const;
+const SUBCOMMANDS = ['build', 'check', 'inspect', 'address', 'utxos', 'lock', 'unlock', 'simulate', 'publish', 'mint'] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number];
 
 export default async function contract(args: Args): Promise<void> {
@@ -46,6 +46,9 @@ export default async function contract(args: Args): Promise<void> {
     case 'address': return address(args);
     case 'lock': return lock(args);
     case 'unlock': return unlock(args);
+    case 'simulate': return simulate(args);
+    case 'publish': return publish(args);
+    case 'mint': return mint(args);
   }
 }
 
@@ -622,4 +625,294 @@ async function utxos(args: Args): Promise<void> {
     for (const a of e.assets) process.stderr.write(`    ${dim(`${a.quantity} × ${a.unit}`)}\n`);
   }
   process.stderr.write('\n');
+}
+
+// ── simulate ─────────────────────────────────────────────────────────
+//
+// What a script costs, without paying for it.
+//
+// The ledger requires an execution budget declared up front. Too low and the
+// script aborts mid-run and the collateral is forfeited; too high and you overpay
+// or breach the per-transaction cap. The only way to know the number is to run
+// the validator, so this runs it and reports rather than submitting.
+
+async function simulate(args: Args): Promise<void> {
+  const ctx = await openActive(args);
+  const loaded = open(args);
+  const validator = selectValidator(loaded, selection(args));
+  const params = parseParams(flagValue(args, 'params'));
+  const identity = scriptIdentity(loaded, validator, ctx.network.name, params);
+  const code = scriptBytes(validator, params);
+
+  const redeemer = await buildRedeemer(args);
+  const target = await resolveScriptUtxo(args, ctx, identity.address);
+  const datumMode = datumModeOf(target, flagValue(args, 'datum'));
+
+  const signerHash = await pubKeyHashOf(ctx);
+  const utxos = await ctx.wallet.getUtxos();
+  const protocol = await ctx.provider.fetchProtocolParameters();
+  const collateral = selectCollateral(utxos, requiredCollateral({
+    minFeeA: protocol.minFeeA, minFeeB: protocol.minFeeB,
+    maxTxSize: protocol.maxTxSize, collateralPercent: protocol.collateralPercent,
+  }));
+  const evaluator = await makeEvaluator(ctx.provider, ctx.network);
+
+  let unsigned: string;
+  try {
+    const b = makeTxBuilder(ctx.provider, { withScripts: true, evaluator })
+      .spendingPlutusScript(identity.version)
+      .txIn(target.input.txHash, target.input.outputIndex, target.output.amount, target.output.address)
+      .txInScript(code)
+      .txInRedeemerValue(redeemer.value as never);
+    if (datumMode.inline) b.txInInlineDatumPresent();
+    else b.txInDatumValue(datumMode.value as never);
+
+    unsigned = await withoutCostModelNoise(() => b
+      .requiredSignerHash(signerHash)
+      .txInCollateral(collateral.input.txHash, collateral.input.outputIndex,
+                      collateral.output.amount, collateral.output.address)
+      .changeAddress(ctx.payment)
+      .selectUtxosFrom(utxos)
+      .complete());
+  } catch (err) {
+    throw translateScriptFailure(err, identity.address);
+  }
+
+  // Ask the evaluator directly. The builder already used it to fill in the
+  // budget; this is the same question asked so the number can be reported.
+  const actions = await withoutCostModelNoise(() => evaluator.evaluateTx(unsigned, [], []));
+  const used = actions.reduce(
+    (acc, a) => ({ mem: acc.mem + Number(a.budget.mem), steps: acc.steps + Number(a.budget.steps) }),
+    { mem: 0, steps: 0 },
+  );
+
+  const maxMem = Number(protocol.maxTxExMem);
+  const maxSteps = Number(protocol.maxTxExSteps);
+  const pct = (n: number, max: number) => (max > 0 ? Math.round((n / max) * 1000) / 10 : 0);
+  // Script execution is priced separately from size, and this is the part a
+  // contract author controls.
+  const scriptFee = Math.ceil(used.mem * Number(protocol.priceMem) + used.steps * Number(protocol.priceStep));
+  const sizeBytes = Math.floor(unsigned.length / 2);
+
+  if (hasFlag(args, 'json')) {
+    writeJson({
+      network: ctx.network.name,
+      scriptAddress: identity.address,
+      spending: refOf(target),
+      redeemers: actions.map((a) => ({ tag: a.tag, index: a.index, mem: Number(a.budget.mem), steps: Number(a.budget.steps) })),
+      executionUnits: { mem: used.mem, steps: used.steps },
+      limits: { maxMem, maxSteps },
+      usage: { memPercent: pct(used.mem, maxMem), stepsPercent: pct(used.steps, maxSteps) },
+      scriptFeeLovelace: String(scriptFee),
+      txSizeBytes: sizeBytes,
+      maxTxSize: protocol.maxTxSize,
+      withinLimits: used.mem <= maxMem && used.steps <= maxSteps && sizeBytes <= protocol.maxTxSize,
+    });
+    return;
+  }
+
+  process.stderr.write(heading('Simulation') + '\n');
+  process.stderr.write(fields([
+    ['spending', refOf(target)],
+    ['memory', `${used.mem.toLocaleString()} / ${maxMem.toLocaleString()}  (${pct(used.mem, maxMem)}%)`],
+    ['steps', `${used.steps.toLocaleString()} / ${maxSteps.toLocaleString()}  (${pct(used.steps, maxSteps)}%)`],
+    ['script fee', `${formatAda(BigInt(scriptFee))}`],
+    ['tx size', `${sizeBytes} / ${protocol.maxTxSize} bytes`],
+  ]) + '\n');
+  process.stderr.write('\n' + dim('  Nothing submitted. The validator ran and approved.') + '\n\n');
+}
+
+// ── publish ──────────────────────────────────────────────────────────
+//
+// A CIP-33 reference script: the validator's bytes parked in a UTxO so later
+// transactions can point at them instead of each carrying a copy.
+//
+// **This is the honest reading of "deploy"** — the only operation on this chain
+// that genuinely publishes code once. It is still an optimisation rather than a
+// prerequisite: a script always works inline, but a large one inlined breaches
+// the transaction size limit, and every spend pays for the bytes again.
+
+async function publish(args: Args): Promise<void> {
+  const ctx = await openActive(args);
+  const loaded = open(args);
+  const validator = selectValidator(loaded, selection(args));
+  const params = parseParams(flagValue(args, 'params'));
+  const identity = scriptIdentity(loaded, validator, ctx.network.name, params);
+  const code = scriptBytes(validator, params);
+  const scriptBytesLength = Math.floor(code.length / 2);
+
+  // Where the reference output lives is a choice with consequences. Its own
+  // address by default: nobody can spend it, so the reference cannot be
+  // withdrawn — which is what makes it dependable for everyone else. `--to-self`
+  // keeps it spendable so the ADA can be recovered.
+  const toSelf = hasFlag(args, 'to-self');
+  const holder = toSelf ? ctx.payment : identity.address;
+
+  const protocol = await ctx.provider.fetchProtocolParameters();
+  const utxos = await ctx.wallet.getUtxos();
+
+  let unsigned: string;
+  try {
+    const b = makeTxBuilder(ctx.provider)
+      .txOut(holder, [])
+      .txOutReferenceScript(code, identity.version);
+    // A reference output still needs its minimum ADA, and the script bytes make
+    // it large — this is the one case where that minimum is a real number rather
+    // than a formality.
+    if (toSelf) b.txOutInlineDatumValue((await unitDatum()) as never);
+
+    unsigned = await withoutCostModelNoise(() => b
+      .changeAddress(ctx.payment)
+      .selectUtxosFrom(utxos)
+      .complete());
+  } catch (err) {
+    throw translateBuildFailure(err, {
+      what: `publish a ${scriptBytesLength}-byte reference script`,
+      minValueHint: 'a reference output must hold minimum ADA proportional to the script it carries',
+    });
+  }
+
+  const submitted = hasFlag(args, 'yes');
+  const txHash = submitted ? await signAndSubmit(ctx, unsigned) : null;
+
+  if (hasFlag(args, 'json')) {
+    writeJson({
+      network: ctx.network.name, wallet: ctx.stored.name,
+      scriptHash: identity.hash,
+      scriptSizeBytes: scriptBytesLength,
+      referenceAddress: holder,
+      recoverable: toSelf,
+      submitted, ...(txHash ? { txHash, referenceInput: `${txHash}#0` } : {}),
+    });
+    return;
+  }
+
+  process.stderr.write(heading(submitted ? 'Published' : 'Publish (dry run)') + '\n');
+  process.stderr.write(fields([
+    ['script', identity.hash],
+    ['size', `${scriptBytesLength} bytes`],
+    ['parked at', toSelf ? `${ctx.stored.name} (recoverable)` : 'the script address (permanent)'],
+  ]) + '\n');
+  if (!submitted) {
+    process.stderr.write('\n' + dim('  Nothing submitted. Add --yes to send it.') + '\n');
+    return;
+  }
+  process.stderr.write('\n' + dim(`  Reference it as ${txHash}#0`) + '\n\n');
+  process.stdout.write(`${txHash}#0\n`);
+}
+
+/** The unit datum — constructor 0 with no fields. Marks an output as script-owned. */
+async function unitDatum(): Promise<unknown> {
+  const { mConStr0 } = await mesh();
+  return mConStr0([]);
+}
+
+// ── mint ─────────────────────────────────────────────────────────────
+//
+// Minting under a Plutus policy, as opposed to `asset mint`'s native script.
+//
+// Kept separate deliberately. The two share three flags and differ in seven: a
+// Plutus mint needs a blueprint, a module, a validator, parameters, a redeemer,
+// collateral and evaluation, none of which mean anything to a native-script mint.
+// A command whose valid flag combinations form two non-overlapping sets is two
+// commands wearing one name — and over MCP that becomes a schema an agent calls
+// wrongly.
+//
+// The seam already exists downstream: `balance`, `asset send` and `swap` all work
+// on `policyId + assetName` regardless of how a token came to be. How a token
+// comes into existence is a policy question; what happens to it afterwards is an
+// asset question.
+
+async function mint(args: Args): Promise<void> {
+  const ctx = await openActive(args);
+  const loaded = open(args);
+  // A minting policy is the `mint` handler, so prefer it when selecting.
+  const validator = selectValidator(loaded, { ...selection(args), handler: 'mint' });
+  const params = parseParams(flagValue(args, 'params'));
+  const identity = scriptIdentity(loaded, validator, ctx.network.name, params);
+  const code = scriptBytes(validator, params);
+
+  const name = flagValue(args, 'name');
+  if (!name) throw usageError('mint needs --name <asset-name>', 'example: --name GiftCard');
+  const qtyRaw = flagValue(args, 'qty') ?? '1';
+  const quantity = BigInt(qtyRaw);
+  if (quantity === 0n) throw usageError('--qty may not be zero', 'positive mints, negative burns');
+
+  const redeemer = await buildRedeemer(args);
+  const { stringToHex } = await mesh();
+  const assetName = stringToHex(name);
+  // For a minting validator the script hash IS the policy id — the namespace
+  // every token it mints lives under.
+  const policyId = identity.hash;
+  const unit = policyId + assetName;
+
+  const utxos = await ctx.wallet.getUtxos();
+  const protocol = await ctx.provider.fetchProtocolParameters();
+  const collateral = selectCollateral(utxos, requiredCollateral({
+    minFeeA: protocol.minFeeA, minFeeB: protocol.minFeeB,
+    maxTxSize: protocol.maxTxSize, collateralPercent: protocol.collateralPercent,
+  }));
+  const evaluator = await makeEvaluator(ctx.provider, ctx.network);
+
+  // A one-shot policy commonly requires a specific UTxO be spent, which is what
+  // makes it one-shot: a UTxO can be spent once in all of history, so the mint
+  // can happen once. --spend names it.
+  const seedRef = flagValue(args, 'spend');
+  const seed = seedRef ? utxos.find((u) => refOf(u) === seedRef) : undefined;
+  if (seedRef && !seed) {
+    throw usageError(`${seedRef} is not a UTxO in this wallet`,
+      `available: ${utxos.slice(0, 4).map(refOf).join(', ')}`);
+  }
+
+  let unsigned: string;
+  try {
+    const b = makeTxBuilder(ctx.provider, { withScripts: true, evaluator });
+    if (seed) b.txIn(seed.input.txHash, seed.input.outputIndex, seed.output.amount, seed.output.address);
+
+    b.mintPlutusScript(identity.version)
+      .mint(quantity.toString(), policyId, assetName)
+      .mintingScript(code)
+      .mintRedeemerValue(redeemer.value as never);
+
+    unsigned = await withoutCostModelNoise(() => b
+      .txInCollateral(collateral.input.txHash, collateral.input.outputIndex,
+                      collateral.output.amount, collateral.output.address)
+      .changeAddress(ctx.payment)
+      .selectUtxosFrom(seed ? utxos.filter((u) => refOf(u) !== seedRef) : utxos)
+      .complete());
+  } catch (err) {
+    throw translateScriptFailure(err, identity.address);
+  }
+
+  const submitted = hasFlag(args, 'yes');
+  const txHash = submitted ? await signAndSubmit(ctx, unsigned) : null;
+  const burning = quantity < 0n;
+
+  if (hasFlag(args, 'json')) {
+    writeJson({
+      network: ctx.network.name, wallet: ctx.stored.name,
+      action: burning ? 'burn' : 'mint',
+      assetName: name, quantity: quantity.toString(),
+      policyId, unit,
+      redeemer: redeemer.describe,
+      ...(seedRef ? { spent: seedRef } : {}),
+      submitted, ...(txHash ? { txHash } : {}),
+    });
+    return;
+  }
+
+  process.stderr.write(heading(burning ? 'Burn' : 'Mint') + (submitted ? '' : ' (dry run)') + '\n');
+  process.stderr.write(fields([
+    ['asset', name],
+    ['quantity', quantity.toString()],
+    ['policy id', policyId],
+    ['redeemer', redeemer.describe],
+    ...(seedRef ? [['spending', seedRef] as [string, string]] : []),
+  ]) + '\n');
+  if (!submitted) {
+    process.stderr.write('\n' + dim('  Nothing submitted. Add --yes to send it.') + '\n');
+    return;
+  }
+  process.stderr.write('\n');
+  process.stdout.write(txHash + '\n');
 }

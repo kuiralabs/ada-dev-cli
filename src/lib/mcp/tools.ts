@@ -644,6 +644,124 @@ export const TOOLS: ToolDef[] = [
       + `${str(i.redeemerMessage) ?? str(i.redeemer) ?? '(unspecified)'}. The validator runs during `
       + 'validation; if it rejects, the transaction fails and the collateral pledged is forfeited.',
   },
+  {
+    name: 'ada_contract_simulate',
+    description:
+      'Run a validator and report the execution units it needs, WITHOUT submitting. Cardano '
+      + 'requires this budget declared up front: too low and the script aborts mid-run and the '
+      + 'pledged collateral is forfeited, too high and the fee is wasted. Read-only — it moves no '
+      + 'money and costs nothing. Call this before ada_contract_unlock when the validator is '
+      + 'unfamiliar or the transaction is large.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        redeemerMessage: { type: 'string' },
+        redeemer: { type: 'string' },
+        txIn: { type: 'string' },
+        datum: { type: 'string' },
+        blueprint: { type: 'string' },
+        module: { type: 'string' },
+        validator: { type: 'string' },
+        params: { type: 'string' },
+        wallet: { type: 'string' },
+        network: NETWORK,
+      },
+    },
+    command: 'contract',
+    toArgv: (i) => {
+      const argv = ['simulate', ...blueprintArgv(i), ...paramsArgv(i)];
+      const m = str(i.redeemerMessage);
+      if (m !== undefined) argv.push('--redeemer-message', m);
+      for (const [k, f] of [['redeemer', '--redeemer'], ['txIn', '--tx-in'], ['datum', '--datum']] as const) {
+        const v = str(i[k]);
+        if (v) argv.push(f, v);
+      }
+      const w = str(i.wallet);
+      return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
+    },
+  },
+  {
+    name: 'ada_contract_publish',
+    description:
+      'Write a CIP-33 reference script: the validator\'s bytes parked in a UTxO so later '
+      + 'transactions point at them instead of each carrying a copy. This is the closest thing '
+      + 'Cardano has to a deploy step, and it is an optimisation rather than a requirement. Does '
+      + 'NOT execute on this call: returns a pending token. Show the description verbatim, get '
+      + 'consent, then call ada_confirm.',
+    annotations: { destructiveHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        toSelf: { type: 'boolean', description: 'Park it where the ADA can be recovered. Default parks it at the script address, where nobody can spend it.' },
+        blueprint: { type: 'string' },
+        module: { type: 'string' },
+        validator: { type: 'string' },
+        params: { type: 'string' },
+        wallet: { type: 'string' },
+        network: NETWORK,
+      },
+    },
+    command: 'contract',
+    toArgv: (i) => {
+      const argv = ['publish', ...blueprintArgv(i), ...paramsArgv(i), '--yes'];
+      if (i.toSelf) argv.push('--to-self');
+      const w = str(i.wallet);
+      return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
+    },
+    describeForConsent: (i) =>
+      `Publish a reference script from wallet "${str(i.wallet) ?? 'the active wallet'}". `
+      + (i.toSelf
+        ? 'It is parked where you can spend it again, so the ADA is recoverable.'
+        : 'It is parked at the script address, where nobody can spend it — the ADA it holds is locked permanently, which is what makes the reference dependable for others.'),
+  },
+  {
+    name: 'ada_contract_mint',
+    description:
+      'Mint or burn under a Plutus policy, where the script hash IS the policy id. A negative '
+      + 'quantity burns. Use ada_asset_mint instead for a simple native-script token with no '
+      + 'contract behind it. Does NOT execute on this call: returns a pending token. Show the '
+      + 'description verbatim, get consent, then call ada_confirm.',
+    annotations: { destructiveHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Asset name, as readable text.' },
+        qty: { type: 'string', description: 'Quantity as a decimal string. Negative burns.' },
+        redeemer: { type: 'string', description: 'Redeemer as Plutus data JSON.' },
+        redeemerMessage: { type: 'string' },
+        spend: { type: 'string', description: 'A UTxO the policy requires be consumed, as <hash>#<index>. How a one-shot policy guarantees it mints only once.' },
+        blueprint: { type: 'string' },
+        module: { type: 'string' },
+        validator: { type: 'string' },
+        params: { type: 'string' },
+        wallet: { type: 'string' },
+        network: NETWORK,
+      },
+      required: ['name'],
+    },
+    command: 'contract',
+    toArgv: (i) => {
+      const argv = ['mint', '--name', String(i.name), ...blueprintArgv(i), ...paramsArgv(i), '--yes'];
+      const q = str(i.qty);
+      if (q) argv.push('--qty', q);
+      const m = str(i.redeemerMessage);
+      if (m !== undefined) argv.push('--redeemer-message', m);
+      for (const [k, f] of [['redeemer', '--redeemer'], ['spend', '--spend']] as const) {
+        const v = str(i[k]);
+        if (v) argv.push(f, v);
+      }
+      const w = str(i.wallet);
+      return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
+    },
+    describeForConsent: (i) => {
+      const q = str(i.qty) ?? '1';
+      const burning = q.startsWith('-');
+      return `${burning ? 'Burn' : 'Mint'} ${q.replace('-', '')} × "${String(i.name)}" under a Plutus policy `
+        + `from wallet "${str(i.wallet) ?? 'the active wallet'}". `
+        + (burning ? 'Burning destroys supply permanently.' : 'Minting creates permanent supply and costs a fee.');
+    },
+  },
 ];
 
 /** Tools that must not execute before the user has agreed. */
