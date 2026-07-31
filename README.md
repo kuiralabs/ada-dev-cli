@@ -10,10 +10,10 @@ Built for two audiences: **developers** starting a Cardano project who want a fu
 local chain in under five minutes, and **AI agents** (Claude Code, Cursor, any MCP client) using
 the same primitives through a built-in MCP server.
 
-> **Status: early.** Wallets, balances, funding, ADA transfers, the devnet lifecycle and chain
-> inspection all work. Native assets and atomic swaps are next. **Not published to npm yet** — see
-> Install below. `ada help --json` reports which commands are implemented; `tasks/IMPLEMENTATION.md`
-> is the full checklist.
+> **Status: working, not yet released.** Wallets, balances, funding, transfers, native assets,
+> atomic swaps, the devnet lifecycle, chain inspection and Aiken contracts all work, verified against
+> a local devnet and against preprod. **Not on npm yet** — see Install below. `ada help --json`
+> reports which commands are implemented; `tasks/IMPLEMENTATION.md` is the full checklist.
 
 ## Install
 
@@ -68,17 +68,35 @@ any Cardano code, whether or not you use this tool.
 | `ada swap inspect` | Show exactly what an offer would do before signing |
 | `ada swap sign` | Co-sign a received offer |
 | `ada swap submit` | Submit the fully-signed swap |
-| `ada address derive` | Derive an address from a mnemonic and path |
+| `ada address derive` | Derive an address through `cardano-address`, cross-checked against the wallet |
 | `ada address inspect` | Decode an address and show its parts |
 | `ada tip` | Current chain tip |
-| `ada fee estimate` | Fee, change, and minimum-value check before committing |
+| `ada params` | Protocol parameters — fee coefficients, min-UTxO, execution limits |
+| `ada status` | Chain, devnet and wallet in one call |
 | `ada localnet up/stop/down/status/logs` | Manage a local devnet |
-| `ada localnet snapshot/rollback` | Rollback testing against a forked chain |
+| `ada localnet snapshot/rollback` | Mark a point in the chain's history, and return to it |
+| `ada localnet addresses` | The devnet's pre-funded genesis accounts |
 | `ada config get/set/unset` | Persistent config — network, active wallet, endpoints |
 | `ada localnet bootstrap` | Download devkit components without starting anything |
 | `ada localnet reset` | Wipe the chain and start fresh |
 | `ada help [command]` | Usage for all or one command |
 | `ada manual` | Full reference — every command, every flag |
+
+### Contracts
+
+Aiken validators, from compiling one to spending what it guards.
+
+| Command | Description |
+|---------|-------------|
+| `ada contract build` / `check` | Compile, and run the validator's own tests — delegated to `aiken` |
+| `ada contract inspect` | What the blueprint declares: validators, handlers, datum and redeemer shapes |
+| `ada contract address` | The script address, derived from the code. No chain call, no fee |
+| `ada contract lock` | Pay to a script address with a datum |
+| `ada contract unlock` | Spend a script UTxO with a redeemer — this is the call |
+| `ada contract utxos` | What sits at the script address, with each datum's encoding |
+| `ada contract simulate` | Execution units and fee, without submitting |
+| `ada contract publish` | A CIP-33 reference script — the honest reading of "deploy" |
+| `ada contract mint` | Mint or burn under a Plutus policy; a negative quantity burns |
 
 Run `ada help --json` for the current list — it marks which commands are implemented.
 

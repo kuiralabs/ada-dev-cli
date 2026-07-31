@@ -7,6 +7,7 @@
 // designed.
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { COMMANDS, GLOBAL_FLAGS, findCommand } from '../lib/reference.ts';
 import { TOOLS } from '../lib/mcp/tools.ts';
 import { commandNames, loaderFor } from '../lib/commands.ts';
@@ -111,6 +112,28 @@ describe('the reference is internally consistent', () => {
           expect(known, `${c.name} example uses ${flag}, which is documented nowhere`).toBe(true);
         }
       }
+    }
+  });
+});
+
+describe('the README describes the commands that exist', () => {
+  // It documented `ada fee estimate`, which was never built, and omitted
+  // `contract` entirely — a whole stage of work — while claiming native assets
+  // and swaps were "next" months after they shipped. A README that describes a
+  // different tool is worse than a short one.
+  const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+
+  it('documents every command the entry point dispatches', () => {
+    for (const name of commandNames()) {
+      expect(new RegExp(`\`ada ${name}\\b`).test(readme), `${name} is missing from the README`).toBe(true);
+    }
+  });
+
+  it('documents no command that does not exist', () => {
+    const dispatchable = new Set(commandNames());
+    const mentioned = [...readme.matchAll(/`ada ([a-z-]+)/g)].map((m) => m[1]);
+    for (const name of new Set(mentioned)) {
+      expect(dispatchable.has(name), `the README documents \`ada ${name}\`, which is not a command`).toBe(true);
     }
   });
 });

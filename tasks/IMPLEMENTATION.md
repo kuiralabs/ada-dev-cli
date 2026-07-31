@@ -7,7 +7,7 @@ Legend: `[x]` done and exercised against a real chain · `[ ]` not built · `[�
 building it, reason given · `[!]` blocked by something outside this repo.
 
 **Now:** 17 commands · 32 MCP tools · 273 offline tests + 9 devnet tests · stages 1–6 closed · stage 7 spine done
-(`inspect`, `address`, `lock`, `unlock`, verified on devnet) · publish held.
+(`inspect`, `address`, `lock`, `unlock`, verified on devnet) · release held.
 
 ---
 
@@ -115,9 +115,13 @@ Midnight verbs would name operations this chain does not have.
 
 - [x] **`contract mint`** — Plutus minting policies, kept separate from `asset mint`. `asset mint` stays the native-script path. The flag surfaces barely overlap — three shared against seven disjoint — and a command whose valid combinations form two non-overlapping sets is two commands wearing one name, which over MCP becomes a union schema an agent will call wrongly. The seam already exists downstream: `balance`, `asset send` and `swap` operate on `policyId + assetName` regardless of how a token was minted. How a token comes into existence is a policy question; what happens to it afterwards is an asset question
 
-## 8 — Publish — held
+## 8 — Release — held
 
-- [ ] **npm, `docs/PUBLISHING.md`, demo, Builder Tools submission**
+Named *release* rather than *publish* on purpose. `ada contract publish` is a command — it writes a
+CIP-33 reference script on-chain — and one word meaning both a subcommand and a shipping milestone
+reads badly the moment they appear in the same paragraph, which they will in the README.
+
+- [ ] **npm, `docs/RELEASING.md`, demo, Builder Tools submission**
 
 **Why held.** Feature-complete is not battle-tested, and this codebase makes the case unusually
 clearly: every defect that mattered was found by *driving* the tool, not by running its tests —
@@ -126,7 +130,7 @@ account, a dry run approving a transaction the chain refused, an offer format th
 about the deal, and a `status` command calling a chain healthy through nine hours of producing
 nothing. The suite was green throughout all of it.
 
-**The bar:** publish once it has carried a real money path end to end **for something other than
+**The bar:** release once it has carried a real money path end to end **for something other than
 itself**, cross-checked against an independent implementation.
 
 ## Declined — decided, so they stop reappearing as gaps
