@@ -20,8 +20,10 @@ import { makeTxBuilder, makeEvaluator, withoutCostModelNoise, type Provider } fr
 import { signAndSubmit, translateBuildFailure, selectCollateral, requiredCollateral, assertMeetsMinValue } from '../lib/tx-common.ts';
 import { adaToLovelace, formatAda, parseSignedQuantity, LOVELACE_UNIT } from '../lib/amount.ts';
 import { assertAssetName } from './asset.ts';
+
 import {
   loadBlueprint, selectValidator, scriptIdentity, scriptBytes, parseParams,
+  checkAgainstSchema, describeExpected,
   type ScriptIdentity,
   splitTitle, listNames, handlersOf,
   type BlueprintValidator, type LoadedBlueprint,
@@ -220,7 +222,7 @@ async function lock(args: Args): Promise<void> {
   if (!amount) throw usageError('lock needs --amount <ada>', 'example: --amount 5');
   const lovelace = adaToLovelace(amount);
 
-  const datum = await buildDatum(args, ctx);
+  const datum = await buildDatum(args, ctx, loaded, validator);
   const output = { address: identity.address, amount: [{ unit: LOVELACE_UNIT, quantity: lovelace.toString() }] };
 
   // The chain refuses an output holding less ADA than its size demands. Checking
@@ -293,22 +295,32 @@ async function lock(args: Args): Promise<void> {
  * the wallet's own public key hash, which is what an ownership-checking
  * validator like hello_world expects. `--datum` takes raw JSON for anything else.
  */
-async function buildDatum(args: Args, ctx: ActiveContext): Promise<{ value: unknown; describe: string }> {
+async function buildDatum(
+  args: Args, ctx: ActiveContext, loaded: LoadedBlueprint, validator: BlueprintValidator,
+): Promise<{ value: unknown; describe: string }> {
   const raw = flagValue(args, 'datum');
   if (raw) {
+    let parsed: unknown;
     try {
-      return { value: JSON.parse(raw), describe: raw };
+      parsed = JSON.parse(raw);
     } catch (err) {
       throw usageError(`--datum is not valid JSON: ${(err as Error).message}`);
     }
+    // The blueprint declares this shape, so a mismatch is knowable now rather
+    // than after the chain has rejected a transaction we paid to submit.
+    checkAgainstSchema(parsed, validator.datum?.schema, loaded, '--datum');
+    return { value: parsed, describe: raw };
   }
   if (hasFlag(args, 'datum-signer')) {
     const hash = await pubKeyHashOf(ctx);
     const { mConStr0 } = await mesh();
     return { value: mConStr0([hash]), describe: `constructor 0 [${hash.slice(0, 16)}…] (my key hash)` };
   }
+  const expected = describeExpected(validator.datum?.schema, loaded);
   throw usageError('lock needs a datum',
-    'use --datum-signer for a datum holding your own key hash, or --datum <json>');
+    expected
+      ? `this validator expects ${expected} — use --datum-signer for your own key hash, or --datum <json>`
+      : 'use --datum-signer for a datum holding your own key hash, or --datum <json>');
 }
 
 let meshData: typeof import('@meshsdk/core') | undefined;
@@ -351,7 +363,7 @@ async function prepareSpend(args: Args, ctx: ActiveContext): Promise<SpendContex
   // Argument validation before any network call. A missing or malformed redeemer
   // is knowable without asking a chain anything, and making someone wait for a
   // round trip to be told they forgot a flag is both slower and less clear.
-  const redeemer = await buildRedeemer(args);
+  const redeemer = await buildRedeemer(args, loaded, validator);
   const target = await resolveScriptUtxo(args, ctx, identity.address);
 
   // How the datum is stored decides how it must be supplied back. An inline datum
@@ -516,22 +528,33 @@ export function datumModeOf(utxo: UTxO, supplied: string | undefined): { inline:
   }
 }
 
-async function buildRedeemer(args: Args): Promise<{ value: unknown; describe: string }> {
+async function buildRedeemer(
+  args: Args, loaded: LoadedBlueprint, validator: BlueprintValidator,
+): Promise<{ value: unknown; describe: string }> {
+  const schema = validator.redeemer?.schema;
   const message = flagValue(args, 'redeemer-message');
   if (message !== undefined) {
     const { mConStr0, stringToHex } = await mesh();
-    return { value: mConStr0([stringToHex(message)]), describe: `constructor 0 ["${message}"]` };
+    const value = mConStr0([stringToHex(message)]);
+    checkAgainstSchema(value, schema, loaded, '--redeemer-message');
+    return { value, describe: `constructor 0 ["${message}"]` };
   }
   const raw = flagValue(args, 'redeemer');
   if (!raw) {
-    throw usageError('unlock needs a redeemer',
-      'use --redeemer-message <text> for a one-field message, or --redeemer <json>');
+    const expected = describeExpected(schema, loaded);
+    throw usageError('needs a redeemer',
+      expected
+        ? `this validator expects ${expected} — use --redeemer <json>, or --redeemer-message <text> for a single text field`
+        : 'use --redeemer-message <text> for a one-field message, or --redeemer <json>');
   }
+  let parsed: unknown;
   try {
-    return { value: JSON.parse(raw), describe: raw };
+    parsed = JSON.parse(raw);
   } catch (err) {
     throw usageError(`--redeemer is not valid JSON: ${(err as Error).message}`);
   }
+  checkAgainstSchema(parsed, schema, loaded, '--redeemer');
+  return { value: parsed, describe: raw };
 }
 
 /**
@@ -843,7 +866,7 @@ async function mint(args: Args): Promise<void> {
   assertAssetName(name);
   const quantity = parseSignedQuantity(flagValue(args, 'qty') ?? '1');
 
-  const redeemer = await buildRedeemer(args);
+  const redeemer = await buildRedeemer(args, loaded, validator);
   const { stringToHex } = await mesh();
   const assetName = stringToHex(name);
   // For a minting validator the script hash IS the policy id — the namespace

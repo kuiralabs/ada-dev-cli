@@ -10,6 +10,7 @@ import { applyParamsToScript, serializePlutusScript, resolveScriptHash } from '@
 import { AdaError, usageError } from './errors.ts';
 import { EXIT_INVALID_ARGS } from './exit-codes.ts';
 import type { NetworkName } from './cli-config.ts';
+import { validate, describe as describeSchema, type Schema, type Definitions } from './schema.ts';
 
 export const BLUEPRINT_FILENAME = 'plutus.json';
 
@@ -27,7 +28,7 @@ export type PlutusVersion = 'V1' | 'V2' | 'V3';
 
 export interface BlueprintParameter {
   title?: string;
-  schema?: unknown;
+  schema?: Schema;
 }
 
 export interface BlueprintValidator {
@@ -35,12 +36,14 @@ export interface BlueprintValidator {
   title: string;
   compiledCode?: string;
   hash?: string;
-  datum?: { title?: string; schema?: unknown };
-  redeemer?: { title?: string; schema?: unknown };
+  datum?: { title?: string; schema?: Schema };
+  redeemer?: { title?: string; schema?: Schema };
   parameters?: BlueprintParameter[];
 }
 
 export interface Blueprint {
+  /** Named schemas that `$ref` points into. Absent on hand-written blueprints. */
+  definitions?: Definitions;
   preamble: {
     title?: string;
     version?: string;
@@ -303,3 +306,37 @@ export function parseParams(raw: string | undefined): unknown[] {
   }
   return parsed;
 }
+
+/**
+ * Check a value against the shape the blueprint declares for it.
+ *
+ * A no-op when the blueprint declares nothing — hand-written or older documents
+ * may omit schemas, and refusing to work with them would be worse than not
+ * checking. Where a schema *is* declared, a mismatch is caught before a
+ * transaction is built rather than after the chain rejects one.
+ */
+export function checkAgainstSchema(
+  value: unknown,
+  schema: Schema | undefined,
+  loaded: LoadedBlueprint,
+  what: string,
+): void {
+  if (!schema) return;
+  const defs = loaded.doc.definitions ?? {};
+  try {
+    validate(value, schema, defs);
+  } catch (err) {
+    if (err instanceof AdaError && err.code === 'schema_mismatch') {
+      throw new AdaError(err.code, `${what}: ${err.message}`, err.exitCode, err.hint);
+    }
+    throw err;
+  }
+}
+
+/** What a declared schema expects, in words. */
+export function describeExpected(schema: Schema | undefined, loaded: LoadedBlueprint): string | undefined {
+  if (!schema) return undefined;
+  return describeSchema(schema, loaded.doc.definitions ?? {});
+}
+
+export type { Schema, Definitions };
