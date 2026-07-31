@@ -10,3 +10,7 @@ private/
 .claude/settings.local.json
 ~/.ada/
 *.ldb
+
+# Devkit logs. yaci-cli writes here on every devnet start, so a tracked copy
+# churns on every run and its contents are a record of one machine's session.
+logs/
