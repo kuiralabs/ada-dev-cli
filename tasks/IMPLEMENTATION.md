@@ -6,7 +6,7 @@ worse than none, because it gets trusted.
 Legend: `[x]` done and exercised against a real chain · `[ ]` not built · `[—]` deliberately not
 building it, reason given · `[!]` blocked by something outside this repo.
 
-**Now:** 17 commands · 29 MCP tools · 257 offline tests · stages 1–6 closed · stage 7 spine done
+**Now:** 17 commands · 29 MCP tools · 269 offline tests · stages 1–6 closed · stage 7 spine done
 (`inspect`, `address`, `lock`, `unlock`, verified on devnet) · publish held.
 
 ---
@@ -82,12 +82,12 @@ address is derived from its hash and exists the moment it compiles; state lives 
 that address, not in the script; and a call is a *spend* of one of those UTxOs. Copying the four
 Midnight verbs would name operations this chain does not have.
 
-- [ ] **`contract build` / `contract check`** — delegate to `aiken`, which owns compilation and the validator's own tests. Detect absence and name the install command, as with `cardano-address`
+- [x] **`contract build` / `contract check`** — delegated to `aiken`. It renders diagnostics only to a terminal and its JSON report only to a pipe, so the stream arrangement follows the audience: a human gets the underlined source line, an agent gets counts to branch on. `ADA_AIKEN_BIN` pins a version, since the compiler decides the script hash
 - [x] **`contract inspect`** — validators, purposes, datum and redeemer schemas, hash, and any unapplied parameters. The blueprint is to this what `contract-info.json` is to Compact
 - [x] **`contract address`** — derived from the blueprint hash, network-discriminated. Cross-checked byte-for-byte against `aiken blueprint address`. Refuses to answer for a validator with unapplied parameters and say which are missing: applying parameters changes the code, so it changes the hash, so it changes the address
 - [x] **`contract lock`** — pay to a script address with a datum
 - [x] **`contract unlock`** — spend a script UTxO with a redeemer. This is the call
-- [ ] **`contract utxos`** — what sits at the script address with datums decoded. This is the state
+- [x] **`contract utxos`** — what sits at the script address, each with its datum encoding. This is the state, and it is a listing rather than an object because a validator holds nothing
 - [ ] **`contract publish`** — a CIP-33 reference script: the only operation that genuinely publishes code once, and the honest reading of "deploy"
 - [ ] **`contract simulate`** — execution units without submitting, so a budget failure is found before a fee is paid
 - [x] **Inline datums are the default, hash mode supported and proven** — no chain publishes the preimage of a hash-stored datum and the devnet indexer serves no lookup, so `unlock` demands the original up front rather than failing at spend time. Both branches verified on devnet: a `--datum-hash` lock, an unlock refused without `--datum`, and the same unlock succeeding with it

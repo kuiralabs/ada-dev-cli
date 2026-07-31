@@ -21,7 +21,7 @@ describe('subcommand dispatch', () => {
     // envelope puts actionable text.
     await expect(run([])).rejects.toThrow(/needs a subcommand/);
     await run([]).catch((e: AdaError) => {
-      expect(e.hint).toContain('inspect, address, lock, unlock');
+      expect(e.hint).toContain('build, check, inspect, address, utxos, lock, unlock');
     });
   });
 

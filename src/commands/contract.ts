@@ -24,10 +24,11 @@ import {
   splitTitle, listNames, handlersOf,
   type BlueprintValidator, type LoadedBlueprint,
 } from '../lib/blueprint.ts';
+import { runAiken } from '../lib/aiken.ts';
 import { fields, heading } from '../ui/format.ts';
 import { dim, bold } from '../ui/colors.ts';
 
-const SUBCOMMANDS = ['inspect', 'address', 'lock', 'unlock'] as const;
+const SUBCOMMANDS = ['build', 'check', 'inspect', 'address', 'utxos', 'lock', 'unlock'] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number];
 
 export default async function contract(args: Args): Promise<void> {
@@ -38,6 +39,9 @@ export default async function contract(args: Args): Promise<void> {
   }
 
   switch (sub as Subcommand) {
+    case 'build': return delegate(args, 'build');
+    case 'check': return delegate(args, 'check');
+    case 'utxos': return utxos(args);
     case 'inspect': return inspect(args);
     case 'address': return address(args);
     case 'lock': return lock(args);
@@ -511,4 +515,106 @@ function translateScriptFailure(err: unknown, scriptAddress: string): AdaError {
     what: `unlock from ${scriptAddress}`,
     detail: 'the transaction could not be built',
   });
+}
+
+// ── build / check ────────────────────────────────────────────────────
+//
+// Delegated to `aiken`, which owns compilation and the validator's own tests.
+// The same rule already applied to derivation: where an authoritative
+// implementation exists, this tool makes it convenient rather than
+// reimplementing it and disagreeing.
+
+async function delegate(args: Args, subcommand: 'build' | 'check'): Promise<void> {
+  const dir = flagValue(args, 'path') ?? process.cwd();
+  const extra = args.positionals.slice(1);
+
+  // Aiken renders a diagnostic only to a terminal and a JSON report only to a
+  // pipe, so which we ask for depends on who is asking. See runAiken.
+  const wantsJson = hasFlag(args, 'json');
+  const { report, version } = runAiken([subcommand, ...extra], dir, { json: wantsJson });
+  const tests = report?.summary;
+
+  if (wantsJson) {
+    writeJson({
+      ran: `aiken ${subcommand}`,
+      compiler: version,
+      directory: dir,
+      ...(tests ? { tests: { total: tests.total, passed: tests.passed, failed: tests.failed } } : {}),
+      ...(subcommand === 'build' ? { blueprint: `${dir.replace(/\/$/, '')}/plutus.json` } : {}),
+    });
+    return;
+  }
+
+  if (subcommand === 'build') {
+    process.stderr.write('\n' + dim('  Wrote plutus.json. Next: ada contract inspect') + '\n');
+  }
+}
+
+// ── utxos ────────────────────────────────────────────────────────────
+//
+// What sits at a script address. **This is the state.** A validator holds
+// nothing, so the only thing that persists is the outputs at its address and
+// the datums attached to them — which is why this is a listing rather than a
+// single object with fields.
+
+async function utxos(args: Args): Promise<void> {
+  const ctx = await openActive(args);
+  const loaded = open(args);
+  const validator = selectValidator(loaded, selection(args));
+  const identity = scriptIdentity(loaded, validator, ctx.network.name, parseParams(flagValue(args, 'params')));
+
+  const at = await ctx.provider.fetchAddressUTxOs(identity.address);
+  const entries = at.map((u) => {
+    const out = u.output as { plutusData?: string | null; dataHash?: string | null };
+    const lovelace = u.output.amount.find((a) => a.unit === LOVELACE_UNIT)?.quantity ?? '0';
+    return {
+      ref: `${u.input.txHash}#${u.input.outputIndex}`,
+      lovelace,
+      ada: formatAda(BigInt(lovelace)),
+      assets: u.output.amount.filter((a) => a.unit !== LOVELACE_UNIT)
+        .map((a) => ({ unit: a.unit, quantity: a.quantity })),
+      // Inline datums are readable; a hash-stored one is not, anywhere, so saying
+      // which it is tells the caller whether they need to supply it to spend.
+      datumEncoding: out.plutusData ? 'inline' : out.dataHash ? 'hash' : 'none',
+      datum: out.plutusData ?? null,
+      datumHash: out.dataHash ?? null,
+    };
+  });
+
+  const total = entries.reduce((sum, e) => sum + BigInt(e.lovelace), 0n);
+
+  if (hasFlag(args, 'json')) {
+    writeJson({
+      network: ctx.network.name,
+      scriptAddress: identity.address,
+      scriptHash: identity.hash,
+      count: entries.length,
+      totalLovelace: total.toString(),
+      totalAda: formatAda(total),
+      utxos: entries,
+    });
+    return;
+  }
+
+  process.stderr.write(heading('Script UTxOs') + '\n');
+  process.stderr.write(fields([
+    ['network', ctx.network.name],
+    ['address', identity.address],
+    ['count', String(entries.length)],
+    ['total', formatAda(total)],
+  ]) + '\n');
+
+  if (entries.length === 0) {
+    process.stderr.write('\n' + dim('  Nothing locked here yet.') + '\n');
+    return;
+  }
+
+  process.stderr.write('\n');
+  for (const e of entries) {
+    process.stderr.write(`  ${e.ref}\n`);
+    process.stderr.write(`    ${e.ada}  ${dim(e.datumEncoding === 'inline' ? 'inline datum'
+      : e.datumEncoding === 'hash' ? 'datum hash — supply the original to spend' : 'no datum')}\n`);
+    for (const a of e.assets) process.stderr.write(`    ${dim(`${a.quantity} × ${a.unit}`)}\n`);
+  }
+  process.stderr.write('\n');
 }

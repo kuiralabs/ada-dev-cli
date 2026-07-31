@@ -144,14 +144,19 @@ export const COMMANDS: CommandDoc[] = [
   },
   {
     name: 'contract',
-    usage: 'ada contract <inspect|address|lock|unlock>',
-    summary: 'Aiken validators — inspect, address, lock funds, unlock them',
+    usage: 'ada contract <build|check|inspect|address|utxos|lock|unlock>',
+    summary: 'Aiken validators — build, inspect, address, lock and unlock',
     implemented: true,
     detail:
       'A Cardano validator is a pure predicate over (datum, redeemer, transaction). It holds no '
       + 'state and there is no deploy step: its address is a hash of its compiled code, so it exists '
       + 'the moment the contract compiles. `address` therefore makes no chain call and costs nothing.\n\n'
-      + 'Both subcommands read the CIP-57 `plutus.json` that `aiken build` produces, found next to '
+      + '`build` and `check` delegate to the `aiken` compiler, which owns compilation and a '
+      + 'validator\'s own tests. Note that aiken renders its diagnostics only to a terminal and its '
+      + 'machine-readable report only to a pipe, so `--json` trades the former for the latter.\n\n'
+      + '`utxos` lists what sits at a script address with each datum\'s encoding — this is the '
+      + 'closest thing to contract state, since a validator itself holds nothing.\n\n'
+      + 'The reading subcommands take the CIP-57 `plutus.json` that `aiken build` produces, found next to '
       + 'the current directory or in a conventional subdirectory, or named with --blueprint. A '
       + 'blueprint lists an entry per handler, so one validator appears several times sharing a '
       + 'hash; --module and --validator narrow it, the same axis `aiken` itself uses.\n\n'
@@ -180,9 +185,13 @@ export const COMMANDS: CommandDoc[] = [
       { flag: '--redeemer-message <text>', description: 'redeemer of one text field (unlock)' },
       { flag: '--redeemer <json>', description: 'redeemer as Plutus data JSON (unlock)' },
       { flag: '--tx-in <hash>#<ix>', description: 'which script UTxO to spend when several exist' },
+      { flag: '--path <dir>', description: 'project directory for build and check' },
     ],
     examples: [
+      'ada contract build',
+      'ada contract check',
       'ada contract inspect',
+      'ada contract utxos',
       'ada contract inspect --module oneshot --validator gift_card --json',
       'ada contract address',
       'ada contract address --module oneshot --validator gift_card --params \'["deadbeef"]\'',
