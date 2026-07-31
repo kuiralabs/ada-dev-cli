@@ -129,12 +129,92 @@ export function translateSubmitFailure(err: unknown): AdaError {
   const horizon = translateHorizon(message);
   if (horizon) return horizon;
 
+  const spent = translateInputsSpent(message);
+  if (spent) return spent;
+
   return new AdaError(
     'submit_failed',
     `the chain rejected the transaction: ${summarise(message)}`,
     EXIT_CHAIN_REJECTED,
     'it was valid when built — the chain state may have moved since',
+    chainDetail(message),
   );
+}
+
+/**
+ * The inputs were spent between building and submitting.
+ *
+ * The commonest rejection there is, and it means something specific and
+ * recoverable: another transaction from this wallet is still settling, and the
+ * UTxOs it consumed were selected for this one too. Two sends in a row hit it
+ * every time on a network with twenty-second blocks.
+ *
+ * Worth naming rather than leaving in the generic bucket, where it arrived as
+ * four hundred characters of `ConwayMempoolFailure` inside four layers of JSON
+ * and read like a fault. Nothing is wrong; the answer is to wait a block.
+ */
+export function translateInputsSpent(message: string): AdaError | undefined {
+  if (!/All inputs are spent|BadInputsUTxO|already been included/i.test(message)) return undefined;
+  return new AdaError('inputs_already_spent',
+    'the outputs this transaction spends have already been spent',
+    EXIT_CHAIN_REJECTED,
+    'a previous transaction from this wallet is probably still settling and took the same '
+    + 'UTxOs — wait for a block and run it again. `ada utxos` shows what is currently spendable');
+}
+
+/**
+ * The end of a node's complaint, which is where it says what actually happened.
+ *
+ * A Conway node reporting a script failure writes the reason *last*: the script
+ * bytes, then the hash, then the datum and redeemer, and only then the
+ * evaluation error and any logs the validator emitted. Every summary that
+ * truncates from the front therefore throws away the answer, which is why this
+ * takes the tail rather than the head.
+ *
+ * The message arrives JSON-escaped through the submit API, so it is unescaped
+ * first — otherwise it reads as `\\\\nThe PlutusV3 script failed:` and the
+ * reader does the decoding by eye.
+ */
+const MAX_CHAIN_DETAIL = 600;
+function chainDetail(message: string): string | undefined {
+  const unescaped = message
+    .replace(/\\+n/g, '\n')
+    .replace(/\\+"/g, '"')
+    .replace(/\\+\\/g, '\\')
+    // Blobs are stripped wherever they sit, not only when they occupy a line of
+    // their own: a node sometimes runs the script bytes into the surrounding
+    // prose, and a line-level filter then keeps two thousand characters of
+    // base64 and pushes the reason past the length limit.
+    .replace(ENCODED_BLOB, '…');
+
+  const meaningful = unescaped
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '')
+    // Encoded data: the script, the hash, the raw datum. Named by the line above
+    // them, so dropping them loses nothing a reader wanted.
+    .filter((l) => !/^"?[A-Za-z0-9+/=]{60,}"?,?$/.test(l))
+    .filter((l) => !/^Base64-encoded script bytes:?$/i.test(l));
+
+  if (meaningful.length === 0) return undefined;
+
+  // The reason is neither at the front nor at the very back: a node writes the
+  // script bytes first and the cost model last, with the evaluation error
+  // between them. So the explaining lines are selected rather than sliced —
+  // found by reading a real rejection whose useful sentence sat at character
+  // 4,000 of 7,000.
+  // Only the lines that genuinely explain, and only the strong signals. Weak
+  // ones like "error" match the JSON envelope every rejection is wrapped in, so
+  // `detail` filled up with CORS headers and said nothing the message had not.
+  const explains = meaningful.filter((l) =>
+    EXPLAINS.test(l) && !/^\(?\[?[0-9,\s\]\[]+\)?$/.test(l));
+
+  // Nothing specific to add is a good enough answer. A detail that merely
+  // repeats the message costs the reader a second pass for nothing.
+  if (explains.length === 0) return undefined;
+
+  const chosen = explains.join('\n');
+  return chosen.length > MAX_CHAIN_DETAIL ? `${chosen.slice(0, MAX_CHAIN_DETAIL)}…` : chosen;
 }
 
 /**
@@ -161,8 +241,33 @@ export function translateHorizon(message: string): AdaError | undefined {
 
 /** Keep the first line and the leading text; drop the wall of source locations. */
 const MAX_CHAIN_ERROR = 400;
+
+/**
+ * Anything long enough and uniform enough to be encoded data rather than prose.
+ *
+ * A Conway node reporting a failed script leads with the whole compiled
+ * validator in base64 — several thousand characters before it says anything —
+ * and puts the evaluation logs and the actual reason at the *end*. Truncating
+ * the front therefore kept the one part that explains nothing and dropped the
+ * only part that explains anything. Observed on a rejected settle, where the
+ * message was cut at four hundred characters of base64.
+ */
+const ENCODED_BLOB = /[A-Za-z0-9+/=\\]{80,}/g;
+
+/**
+ * What counts as an explanation, as opposed to the envelope around one.
+ *
+ * Deliberately narrow: these are the phrases a Plutus VM uses when it says why
+ * it stopped. Anything broader matches the JSON wrapper and the HTTP headers
+ * that arrive with every rejection alike.
+ */
+const EXPLAINS = /terminated|overspending|budget|CekError|evaluation error|trace|logs?:|script failed/i;
+
 function summarise(message: string): string {
-  const collapsed = message.replace(/\s+/g, ' ').trim();
+  const collapsed = message
+    .replace(ENCODED_BLOB, '…')
+    .replace(/\s+/g, ' ')
+    .trim();
   return collapsed.length > MAX_CHAIN_ERROR
     ? `${collapsed.slice(0, MAX_CHAIN_ERROR)}… (${collapsed.length} chars, truncated)`
     : collapsed;

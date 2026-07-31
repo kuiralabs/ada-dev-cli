@@ -19,8 +19,6 @@ const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   'v',
   'yes',
   'y',
-  'verbose',
-  'quiet',
   'force',
 ]);
 

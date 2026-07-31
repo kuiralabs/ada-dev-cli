@@ -65,8 +65,22 @@ function selection(args: Args) {
   return { module: flagValue(args, 'module'), validator: flagValue(args, 'validator') };
 }
 
+/**
+ * The project directory a subcommand works in.
+ *
+ * `--path` selects the project; without it, the directory you are standing in.
+ * `build` and `check` honoured it and the eight subcommands that read a blueprint
+ * did not — so `contract inspect --path ./bounty` scanned the current directory,
+ * found nothing, and reported `blueprint_not_found` while pointing at a project
+ * that had been built. One flag that works on two of ten subcommands is worse
+ * than no flag, because nothing says which two.
+ */
+function projectDir(args: Args): string {
+  return flagValue(args, 'path') ?? process.cwd();
+}
+
 function open(args: Args): LoadedBlueprint {
-  return loadBlueprint(flagValue(args, 'blueprint'));
+  return loadBlueprint(flagValue(args, 'blueprint'), projectDir(args));
 }
 
 // ── inspect ──────────────────────────────────────────────────────────
@@ -98,27 +112,27 @@ async function inspect(args: Args): Promise<void> {
     return;
   }
 
-  process.stderr.write(heading('Contract') + '\n');
-  process.stderr.write(fields([
+  process.stdout.write(heading('Contract') + '\n');
+  process.stdout.write(fields([
     ['blueprint', loaded.path],
     ['title', loaded.doc.preamble.title ?? '(none)'],
     ['plutus', loaded.version],
     ['compiler', compilerOf(loaded)],
   ]) + '\n');
 
-  process.stderr.write('\n' + bold('  Validators') + '\n');
+  process.stdout.write('\n' + bold('  Validators') + '\n');
   for (const v of summary) {
-    process.stderr.write(`    ${v.name}  ${dim(v.handlers.join(', '))}\n`);
+    process.stdout.write(`    ${v.name}  ${dim(v.handlers.join(', '))}\n`);
   }
 
   if (!selected) {
-    process.stderr.write('\n' + dim('  Several validators — narrow with --module and --validator') + '\n');
+    process.stdout.write('\n' + dim('  Several validators — narrow with --module and --validator') + '\n');
     return;
   }
 
   const d = describe(loaded, selected);
-  process.stderr.write('\n' + bold(`  ${d.module}.${d.validator}`) + '\n');
-  process.stderr.write(fields([
+  process.stdout.write('\n' + bold(`  ${d.module}.${d.validator}`) + '\n');
+  process.stdout.write(fields([
     ['handlers', d.handlers.join(', ')],
     ['hash', d.hash ?? '(uncompiled)'],
     ['datum', d.datum ?? '(none)'],
@@ -126,10 +140,10 @@ async function inspect(args: Args): Promise<void> {
   ]) + '\n');
 
   if (d.parameters.length > 0) {
-    process.stderr.write('\n' + bold('  Parameters') + dim(' — compile-time, must be applied') + '\n');
-    for (const p of d.parameters) process.stderr.write(`    ${p}\n`);
-    process.stderr.write('\n' + dim('  Applying parameters changes the hash, and so the address.') + '\n');
-    process.stderr.write(dim(`  Supply them: ada contract address --params '[…]'`) + '\n');
+    process.stdout.write('\n' + bold('  Parameters') + dim(' — compile-time, must be applied') + '\n');
+    for (const p of d.parameters) process.stdout.write(`    ${p}\n`);
+    process.stdout.write('\n' + dim('  Applying parameters changes the hash, and so the address.') + '\n');
+    process.stdout.write(dim(`  Supply them: ada contract address --params '[…]'`) + '\n');
   }
 }
 
@@ -399,7 +413,35 @@ interface SpendContext {
   costModels?: number[][];
   /** Set when --mint asks the same transaction to issue a token. */
   mintAlong?: MintAlong;
+  /** Set when --continue carries the contract's state forward. */
+  carryOn?: CarryOn;
+  /** Outputs to third parties: refunds, payouts, fee splits. */
+  payouts: Payout[];
   extras: TxExtras;
+}
+
+/**
+ * A continuing output: value returned to the script with a new datum.
+ *
+ * This is what makes a validator a **state machine** rather than a one-shot
+ * escrow. An auction's raise, a vesting schedule's partial release, an order
+ * book's partial fill and an AMM's swap are all the same transaction shape —
+ * spend the contract's UTxO, produce another at the same address whose datum
+ * says what changed.
+ *
+ * Without it `unlock` could only ever drain a script: every validator that
+ * checks its own continuing output rejected the transaction, and the failure
+ * arrived as a script error rather than as "this tool cannot build that".
+ */
+interface CarryOn {
+  lovelace: bigint;
+  datum: unknown;
+}
+
+/** Lovelace to an ordinary address, alongside whatever else the transaction does. */
+interface Payout {
+  address: string;
+  lovelace: bigint;
 }
 
 /**
@@ -517,6 +559,13 @@ async function prepareSpend(args: Args, ctx: ActiveContext): Promise<SpendContex
   // now, and reporting "20 UTxOs sit at the script address" instead is both
   // slower and about the wrong thing entirely.
   const extraFlags = readExtraFlags(args);
+  // Same rule: a continuing output missing its datum, or a malformed --pay, is
+  // knowable without asking a chain anything. Read below the UTxO lookup these
+  // reported the wrong problem — a fake --tx-in was blamed for a missing
+  // --continue-datum, because the network call happened first.
+  const carryOn = readCarryOn(args, loaded, validator);
+  const payouts = readPayouts(args);
+
   const target = await resolveScriptUtxo(args, ctx, identity.address);
 
   // How the datum is stored decides how it must be supplied back. An inline datum
@@ -532,7 +581,80 @@ async function prepareSpend(args: Args, ctx: ActiveContext): Promise<SpendContex
   const extras = await anchorValidity(extraFlags, ctx);
   const mintAlong = await readMintAlong(args, loaded, validator);
 
-  return { identity, code, target, redeemer, datumMode, collateral, utxos, protocol, evaluator, costModels, mintAlong, extras };
+  return {
+    identity, code, target, redeemer, datumMode, collateral, utxos, protocol,
+    evaluator, costModels, mintAlong, carryOn, payouts, extras,
+  };
+}
+
+/**
+ * `--continue <ada>` with `--continue-datum <json>`: the new state.
+ *
+ * The address is not asked for. A continuing output by definition returns to the
+ * validator being spent, and letting it be named would let a typo send the
+ * contract's state somewhere it can never be spent from again.
+ *
+ * The datum is checked against the validator's declared datum schema, not its
+ * redeemer's — a state machine's new state is the same type as its old one, and
+ * checking the wrong schema rejects correct input.
+ */
+function readCarryOn(
+  args: Args, loaded: LoadedBlueprint, validator: BlueprintValidator,
+): CarryOn | undefined {
+  const amount = flagValue(args, 'continue');
+  const raw = flagValue(args, 'continue-datum');
+
+  if (!amount && !raw) return undefined;
+  if (!amount) {
+    throw usageError('--continue-datum needs --continue',
+      'a continuing output carries both a value and the state that describes it');
+  }
+  if (!raw) {
+    throw usageError('--continue needs --continue-datum',
+      'an output back to the script with no datum can never be spent — the validator '
+      + 'would have nothing to read');
+  }
+
+  let datum: unknown;
+  try {
+    datum = JSON.parse(raw);
+  } catch (err) {
+    throw usageError(`--continue-datum is not valid JSON: ${(err as Error).message}`);
+  }
+
+  if (validator.datum?.schema) {
+    checkAgainstSchema(datum, validator.datum.schema, loaded, '--continue-datum');
+  }
+
+  return { lovelace: adaToLovelace(amount), datum };
+}
+
+/**
+ * `--pay <addr>:<ada>` — value to somebody who is not the spender.
+ *
+ * Change alone cannot express this: it all returns to one address. A validator
+ * that requires the party it displaces to be made whole — an outbid bidder, a
+ * cancelled order, a royalty — needs an output naming them, and comma-separated
+ * pairs follow the same shape `--signer` already uses for a list.
+ */
+function readPayouts(args: Args): Payout[] {
+  const raw = flagValue(args, 'pay');
+  if (!raw) return [];
+
+  return raw.split(',').map((p) => p.trim()).filter((p) => p !== '').map((spec) => {
+    // Split on the last colon: a bech32 address contains none, but saying so
+    // explicitly costs nothing and survives a future address format that does.
+    const at = spec.lastIndexOf(':');
+    if (at <= 0) {
+      throw usageError(`--pay expects <address>:<ada>, got: ${spec}`,
+        'for example --pay addr_test1...:12.5');
+    }
+    const address = spec.slice(0, at);
+    if (!address.startsWith('addr')) {
+      throw usageError(`--pay: not a Cardano address: ${address}`, 'expected a bech32 address');
+    }
+    return { address, lovelace: adaToLovelace(spec.slice(at + 1)) };
+  });
 }
 
 /** Build the spending transaction. One definition, two callers. */
@@ -556,6 +678,18 @@ async function buildSpend(ctx: ActiveContext, spend: SpendContext): Promise<stri
         .mint(spend.mintAlong.quantity.toString(), spend.identity.hash, spend.mintAlong.assetName)
         .mintingScript(spend.code)
         .mintRedeemerValue(spend.mintAlong.redeemer as never);
+    }
+
+    // The continuing output, before any payout: a validator that expects exactly
+    // one output back to itself is checking the whole output list, so what
+    // matters is that it is present and correct, not where it sits.
+    if (spend.carryOn) {
+      b.txOut(spend.identity.address, [{ unit: LOVELACE_UNIT, quantity: spend.carryOn.lovelace.toString() }])
+        .txOutInlineDatumValue(spend.carryOn.datum as never);
+    }
+
+    for (const payout of spend.payouts) {
+      b.txOut(payout.address, [{ unit: LOVELACE_UNIT, quantity: payout.lovelace.toString() }]);
     }
 
     applyExtras(b, spend.extras);
@@ -738,6 +872,33 @@ async function buildRedeemer(
  * a raw builder error helps least — it arrives as "Evaluate redeemers failed"
  * followed by a wall of CBOR.
  */
+/**
+ * The part of an evaluator's complaint worth showing.
+ *
+ * A rejection carries the validator's own `trace` output when the contract
+ * emitted any, and that names the condition that did not hold — which is the
+ * difference between "something in your contract said no" and "the deadline
+ * check said no". Around it sits CBOR and stack noise that helps nobody, so the
+ * lines that carry a trace or an explicit reason are kept and the rest dropped.
+ *
+ * Empty when there is nothing specific to add, so a caller never renders a
+ * heading over the evaluator clearing its throat.
+ */
+function scriptDetail(message: string): string | undefined {
+  const interesting = message
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '')
+    // Hex blobs are the transaction, not an explanation.
+    .filter((l) => !/^[0-9a-f]{64,}$/i.test(l))
+    .filter((l) => /trace|reason|cause|error message|Trace|because|expect/i.test(l));
+
+  if (interesting.length === 0) return undefined;
+  // Bounded: an evaluator that decides to be verbose must not push the hint and
+  // the message off the top of a terminal.
+  return interesting.slice(0, 6).join('\n');
+}
+
 function translateScriptFailure(err: unknown, scriptAddress: string): AdaError {
   const message = err instanceof Error ? err.message : String(err);
 
@@ -749,7 +910,8 @@ function translateScriptFailure(err: unknown, scriptAddress: string): AdaError {
       'the validator rejected this transaction',
       EXIT_CHAIN_REJECTED,
       'the datum, the redeemer, or a condition on the transaction itself did not satisfy it — '
-      + 'check the redeemer against `ada contract inspect`, and that you are signing with the key the datum names');
+      + 'check the redeemer against `ada contract inspect`, and that you are signing with the key the datum names',
+      scriptDetail(message));
   }
   if (/exceeded|budget|ExUnits|max.*ex/i.test(message)) {
     return new AdaError('budget_exceeded',
@@ -771,7 +933,7 @@ function translateScriptFailure(err: unknown, scriptAddress: string): AdaError {
 // reimplementing it and disagreeing.
 
 async function delegate(args: Args, subcommand: 'build' | 'check'): Promise<void> {
-  const dir = flagValue(args, 'path') ?? process.cwd();
+  const dir = projectDir(args);
   const extra = args.positionals.slice(1);
 
   // Both halves of aiken's output are collected — the JSON report, and the
@@ -852,8 +1014,8 @@ async function utxos(args: Args): Promise<void> {
     return;
   }
 
-  process.stderr.write(heading('Script UTxOs') + '\n');
-  process.stderr.write(fields([
+  process.stdout.write(heading('Script UTxOs') + '\n');
+  process.stdout.write(fields([
     ['network', ctx.network.name],
     ['address', identity.address],
     ['count', String(entries.length)],
@@ -861,18 +1023,18 @@ async function utxos(args: Args): Promise<void> {
   ]) + '\n');
 
   if (entries.length === 0) {
-    process.stderr.write('\n' + dim('  Nothing locked here yet.') + '\n');
+    process.stdout.write('\n' + dim('  Nothing locked here yet.') + '\n');
     return;
   }
 
-  process.stderr.write('\n');
+  process.stdout.write('\n');
   for (const e of entries) {
-    process.stderr.write(`  ${e.ref}\n`);
-    process.stderr.write(`    ${e.ada}  ${dim(e.datumEncoding === 'inline' ? 'inline datum'
+    process.stdout.write(`  ${e.ref}\n`);
+    process.stdout.write(`    ${e.ada}  ${dim(e.datumEncoding === 'inline' ? 'inline datum'
       : e.datumEncoding === 'hash' ? 'datum hash — supply the original to spend' : 'no datum')}\n`);
-    for (const a of e.assets) process.stderr.write(`    ${dim(`${a.quantity} × ${a.unit}`)}\n`);
+    for (const a of e.assets) process.stdout.write(`    ${dim(`${a.quantity} × ${a.unit}`)}\n`);
   }
-  process.stderr.write('\n');
+  process.stdout.write('\n');
 }
 
 // ── simulate ─────────────────────────────────────────────────────────
@@ -955,8 +1117,8 @@ async function simulate(args: Args): Promise<void> {
     return;
   }
 
-  process.stderr.write(heading('Simulation') + '\n');
-  process.stderr.write(fields([
+  process.stdout.write(heading('Simulation') + '\n');
+  process.stdout.write(fields([
     ['spending', refOf(target)],
     ['memory', `${used.mem.toLocaleString()} / ${maxMem.toLocaleString()}  (${pct(used.mem, maxMem)}%)`],
     ['steps', `${used.steps.toLocaleString()} / ${maxSteps.toLocaleString()}  (${pct(used.steps, maxSteps)}%)`],
@@ -965,11 +1127,11 @@ async function simulate(args: Args): Promise<void> {
   ]) + '\n');
   if (verify) {
     const node = verify.node as { mem: number; steps: number } | undefined;
-    process.stderr.write(fields([['verified', node
+    process.stdout.write(fields([['verified', node
       ? (verify.agrees ? 'the node agrees' : `the node says ${node.mem.toLocaleString()} / ${node.steps.toLocaleString()}`)
       : `unavailable — ${verify.reason ?? verify.error}`]]) + '\n');
   }
-  process.stderr.write('\n' + dim('  Nothing submitted. The validator ran and approved.') + '\n\n');
+  process.stdout.write('\n' + dim('  Nothing submitted. The validator ran and approved.') + '\n\n');
 }
 
 // ── publish ──────────────────────────────────────────────────────────

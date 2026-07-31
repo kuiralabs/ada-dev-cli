@@ -250,7 +250,86 @@ export async function makeEvaluator(
     process.stderr.write(dim(`  note: slot conversion — ${describeSlotConfig(slots)}\n`));
   }
 
-  return new OfflineEvaluatorScalus(provider, meshNetworkName(network.name), slots.config, models);
+  const evaluator = new OfflineEvaluatorScalus(provider, meshNetworkName(network.name), slots.config, models);
+  return withBudgetMargin(evaluator, await maxExUnits(provider));
+}
+
+/**
+ * How much headroom to add to an evaluated execution budget.
+ *
+ * The offline evaluator is a second implementation of the Plutus VM, and it does
+ * not cost every step the way the node's does. It under-counts, and by enough to
+ * matter: a settling auction validator was evaluated at 33,859,095 CPU here and
+ * refused by the node, which aborted the script part way through for overspending.
+ *
+ * Measured rather than assumed, by resubmitting the same transaction at
+ * different multiples:
+ *
+ *   1.0x  rejected -- overspent
+ *   1.1x  rejected -- overspent
+ *   2.0x  accepted
+ *   4.0x  accepted
+ *
+ * So the gap is a factor, not a rounding error, and a few percent of slack would
+ * not have covered it.
+ *
+ * The failure is also far worse than its size suggests. The node reports it as
+ * `ValidationTagMismatch (IsValid True) (FailedUnexpectedly ...)`, which reads as
+ * "your validator is wrong" -- so the natural response is to debug a contract
+ * that was correct all along. That is what happened: the previous run recorded
+ * this as an unexplained disagreement between the two evaluators and went
+ * looking at the validity range instead.
+ *
+ * Doubling is cheap. Execution units are a small part of a fee -- the auction's
+ * script fee was 0.008 ADA, so the margin costs about eight thousandths of an
+ * ADA -- and over-declaring cannot make a transaction invalid: the ledger
+ * charges what was declared and only rejects when the script needs *more*.
+ *
+ * When it is still not enough the node now says so plainly rather than appearing
+ * to blame the contract; see `chainDetail` in tx-common.
+ */
+const BUDGET_MARGIN = 2.0;
+
+/** The protocol's ceiling on a single transaction's execution units. */
+async function maxExUnits(provider: Provider): Promise<{ mem: number; steps: number }> {
+  try {
+    const p = await provider.fetchProtocolParameters();
+    return { mem: Number(p.maxTxExMem), steps: Number(p.maxTxExSteps) };
+  } catch {
+    // Without a ceiling the margin is still applied; the node's own limit check
+    // then reports an over-large budget far more clearly than a guess would.
+    return { mem: Number.POSITIVE_INFINITY, steps: Number.POSITIVE_INFINITY };
+  }
+}
+
+/**
+ * The same evaluator, reporting budgets with headroom.
+ *
+ * Wrapped rather than adjusted at each call site: Mesh invokes the evaluator
+ * itself during `complete()`, so there is no call site to adjust — and the two
+ * places that do read budgets (`simulate` and `unlock`) must not be able to
+ * disagree about what was declared.
+ */
+function withBudgetMargin(
+  evaluator: OfflineEvaluatorScalus,
+  limits: { mem: number; steps: number },
+): OfflineEvaluatorScalus {
+  const inner = evaluator.evaluateTx.bind(evaluator);
+
+  evaluator.evaluateTx = async (...args: Parameters<OfflineEvaluatorScalus['evaluateTx']>) => {
+    const actions = await inner(...args);
+    return actions.map((action) => ({
+      ...action,
+      budget: {
+        // Never above the protocol ceiling: a budget the ledger refuses outright
+        // is a worse failure than the one being avoided.
+        mem: Math.min(Math.ceil(action.budget.mem * BUDGET_MARGIN), limits.mem),
+        steps: Math.min(Math.ceil(action.budget.steps * BUDGET_MARGIN), limits.steps),
+      },
+    }));
+  };
+
+  return evaluator;
 }
 
 /** A transaction builder wired to the same provider, so fees and coin selection

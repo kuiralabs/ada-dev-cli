@@ -146,12 +146,46 @@ describe('chain rejections are made readable', () => {
     expect(translateSubmitFailure(new Error(PAST_HORIZON)).code).toBe('validity_past_horizon');
   });
 
-  it('truncates a rejection it does not recognise, rather than flooding output', () => {
+  it('bounds a rejection it does not recognise, rather than flooding output', () => {
     // Bad for a person, worse for an agent whose context it fills.
     const huge = new Error('x'.repeat(5000));
     const out = translateSubmitFailure(huge);
     expect(out.message.length).toBeLessThan(600);
+  });
+
+  it('strips the encoded blob a node leads with, keeping what follows', () => {
+    // A Conway node reporting a script failure writes the whole compiled
+    // validator in base64 before it says anything useful, so truncating from the
+    // front kept only the part that explains nothing.
+    const out = translateSubmitFailure(new Error(
+      `The PlutusV3 script failed: ${'QUJDRA'.repeat(400)} The plutus evaluation error is: CekError`,
+    ));
+    expect(out.message).toContain('The PlutusV3 script failed');
+    expect(out.message).toContain('CekError');
+    expect(out.message).not.toContain('QUJDRA');
+  });
+
+  it('still truncates long prose, which no blob rule would catch', () => {
+    const wordy = new Error(`ValueNotConservedUTxO ${'because something went wrong '.repeat(200)}`);
+    const out = translateSubmitFailure(wordy);
+    expect(out.message.length).toBeLessThan(600);
     expect(out.message).toContain('truncated');
+  });
+
+  it('surfaces the budget overspend a node reports, as detail', () => {
+    // The failure that reads as "your validator is wrong" but is not: the
+    // declared execution budget was too small, and the reason sits in the middle
+    // of the message rather than at either end.
+    const out = translateSubmitFailure(new Error(
+      'ValidationTagMismatch (IsValid True) (FailedUnexpectedly (PlutusFailure '
+      + `"${'QUJDRA'.repeat(300)}" `
+      + 'The plutus evaluation error is: CekError An error has occurred:\\n'
+      + 'The machine terminated part way through evaluation due to overspending the budget.\\n'
+      + '({cpu: -402076 | mem: -577})',
+    ));
+    expect(out.detail).toBeDefined();
+    expect(out.detail).toContain('overspending the budget');
+    expect(out.detail).not.toContain('QUJDRA');
   });
 
   it('leaves a short rejection intact', () => {

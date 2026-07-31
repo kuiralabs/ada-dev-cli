@@ -15,8 +15,11 @@ export function fields(rows: Array<[string, string]>): string {
 export const ok = (text: string) => `${green('ok')} ${text}`;
 export const warn = (text: string) => `${yellow('!')} ${text}`;
 
-export function errorBlock(message: string, hint?: string): string {
+export function errorBlock(message: string, hint?: string, detail?: string): string {
   const lines = [`${red('error')} ${message}`];
+  // The failing tool's own words come first: they are specific, where the hint
+  // can only ever list what is usually wrong.
+  if (detail) for (const line of detail.split('\n')) lines.push(`  ${line}`);
   if (hint) lines.push(`  ${dim(hint)}`);
   return lines.join('\n');
 }

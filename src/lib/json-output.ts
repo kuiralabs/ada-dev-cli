@@ -63,6 +63,7 @@ export function writeJsonError(
   message: string,
   hint?: string,
   extra?: Record<string, unknown>,
+  detail?: string,
 ): void {
   emit({
     ok: false,
@@ -71,6 +72,7 @@ export function writeJsonError(
     code,
     message,
     ...(hint ? { hint } : {}),
+    ...(detail ? { detail } : {}),
     ...(extra ?? {}),
   });
 }

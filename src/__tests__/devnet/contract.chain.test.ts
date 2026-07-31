@@ -82,14 +82,14 @@ const settle = () => new Promise((r) => setTimeout(r, SETTLE_MS));
  * So the condition is what the next step actually requires, not merely that
  * something is there.
  */
-async function awaitUtxo(ref: string, needs?: 'datum'): Promise<void> {
+async function awaitUtxo(ref: string, needs?: 'datum'): Promise<any> {
   for (let i = 0; i < CONFIRM_TRIES; i++) {
     await settle();
     const at = ada(['contract', 'utxos', '--blueprint', BLUEPRINT]);
     const found = at.utxos?.find((u: any) => u.ref === ref);
     if (!found) continue;
     if (needs === 'datum' && found.datumEncoding === 'none') continue;
-    return;
+    return found;
   }
   throw new Error(`${ref} never became usable at the script address on ${NETWORK}`
     + (needs ? ` (waiting for its ${needs})` : ''));
@@ -173,6 +173,68 @@ describe(`contract, against a live chain (${NETWORK})`, () => {
         .utxos.some((u: any) => u.ref === `${lock.txHash}#0`);
     }
     expect(gone).toBe(true);
+  }, TEST_TIMEOUT);
+
+  chain()('carries state forward with a continuing output', async () => {
+    // The shape `unlock` could not build at all: spend a script UTxO and produce
+    // another at the same address under a new datum. Every state machine needs
+    // it — an auction raising a bid, a vesting schedule releasing a tranche —
+    // and without it those validators rejected every transaction we could make,
+    // reported as a script failure rather than as a gap in the tool.
+    //
+    // hello_world does not inspect its own outputs, so this checks the shape of
+    // the transaction rather than a validator's opinion of it. The shape is the
+    // part that was missing.
+    const address = ada(['wallet', 'info']).paymentAddress as string;
+    const keyHash = ada(['address', 'inspect', address]).paymentKeyHash as string;
+    expect(keyHash).toMatch(/^[0-9a-f]{56}$/);
+    const signerDatum = JSON.stringify({ alternative: 0, fields: [keyHash] });
+
+    const lock = ada(['contract', 'lock', '--blueprint', BLUEPRINT,
+      '--amount', '10', '--datum-signer', '--yes']);
+    expect(lock.code ?? 'ok', lock.message ?? '').toBe('ok');
+    await awaitUtxo(`${lock.txHash}#0`, 'datum');
+
+    const unlock = ada(['contract', 'unlock', '--blueprint', BLUEPRINT,
+      '--tx-in', `${lock.txHash}#0`, '--redeemer-message', 'Hello, World!',
+      '--continue', '5', '--continue-datum', signerDatum, '--yes']);
+    expect(unlock.code ?? 'ok', unlock.message ?? '').toBe('ok');
+
+    // The continuing output must actually arrive at the script address, and
+    // carry a datum — one without is unspendable for ever, which is why the two
+    // flags are required together.
+    const carried = await awaitUtxo(`${unlock.txHash}#0`, 'datum');
+    expect(carried.lovelace).toBe('5000000');
+    expect(carried.datumEncoding).toBe('inline');
+  }, TEST_TIMEOUT);
+
+  chain()('pays a third party in the same transaction', async () => {
+    // Change all returns to one address, so a validator requiring the party it
+    // displaces to be made whole — a refunded bidder, a cancelled order — could
+    // not be satisfied at all.
+    const recipient = ada(['wallet', 'info']).paymentAddress as string;
+    expect(recipient).toMatch(/^addr/);
+
+    const lock = ada(['contract', 'lock', '--blueprint', BLUEPRINT,
+      '--amount', '8', '--datum-signer', '--yes']);
+    expect(lock.code ?? 'ok', lock.message ?? '').toBe('ok');
+    await awaitUtxo(`${lock.txHash}#0`, 'datum');
+
+    const unlock = ada(['contract', 'unlock', '--blueprint', BLUEPRINT,
+      '--tx-in', `${lock.txHash}#0`, '--redeemer-message', 'Hello, World!',
+      '--pay', `${recipient}:3`, '--yes']);
+    expect(unlock.code ?? 'ok', unlock.message ?? '').toBe('ok');
+    expect(unlock.txHash).toMatch(/^[0-9a-f]{64}$/);
+  }, TEST_TIMEOUT);
+
+  chain()('rejects a continuing output with no datum, rather than stranding it', async () => {
+    // An output at a script address with no datum can never be spent: the
+    // validator would have nothing to read. Caught before any chain call.
+    const out = ada(['contract', 'unlock', '--blueprint', BLUEPRINT,
+      '--tx-in', 'a'.repeat(64) + '#0', '--redeemer-message', 'Hello, World!',
+      '--continue', '5', '--yes']);
+    expect(out.code).toBe('invalid_args');
+    expect(out.message).toContain('--continue-datum');
   }, TEST_TIMEOUT);
 
   chain()('refuses a hash-stored datum until the original is supplied', async () => {

@@ -41,8 +41,35 @@ export default async function help(args: Args): Promise<void> {
       process.exitCode = EXIT_INVALID_ARGS;
       return;
     }
-    process.stdout.write(`${bold(doc.usage)}\n  ${doc.summary}\n`);
-    if (!doc.implemented) process.stdout.write(`  ${dim('not implemented yet')}\n`);
+    // Flags and examples, not only the one-line summary.
+    //
+    // `ada help contract` used to print two lines for a command taking
+    // twenty-eight flags, so the only way to learn one was to read the source —
+    // and an error that says "`ada contract --help` lists them all" was untrue.
+    // The reference already held all of this; nothing rendered it.
+    const out: string[] = [bold(doc.usage), `  ${doc.summary}`];
+    if (!doc.implemented) out.push(`  ${dim('not implemented yet')}`);
+
+    if (doc.flags?.length) {
+      out.push('', bold('  Flags'));
+      const width = doc.flags.reduce((max, f) => Math.max(max, f.flag.length), 0);
+      for (const f of doc.flags) out.push(`    ${f.flag.padEnd(width)}  ${dim(f.description)}`);
+    }
+
+    out.push('', bold('  Global flags'));
+    const globalWidth = GLOBAL_FLAGS.reduce((max, f) => Math.max(max, f.flag.length), 0);
+    for (const f of GLOBAL_FLAGS) out.push(`    ${f.flag.padEnd(globalWidth)}  ${dim(f.description)}`);
+
+    if (doc.examples?.length) {
+      out.push('', bold('  Examples'));
+      for (const e of doc.examples) out.push(`    ${e}`);
+    }
+
+    // The long explanation stays in `manual`: it runs to several paragraphs for
+    // the larger commands, and help is meant to be readable at the point of use.
+    if (doc.detail) out.push('', dim(`  The full explanation: ada manual ${doc.name}`));
+
+    process.stdout.write(out.join('\n') + '\n');
     return;
   }
 

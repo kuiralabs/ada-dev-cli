@@ -260,12 +260,31 @@ export const COMMANDS: CommandDoc[] = [
       + 'own policy. Some validators require exactly that — releasing funds only if a token is '
       + 'issued alongside makes the release and the token inseparable, so neither half is valid '
       + 'alone and building them separately cannot express it. The mint handler takes its own '
-      + 'redeemer, which is usually a different type from the spend\'s.',
+      + 'redeemer, which is usually a different type from the spend\'s.\n\n'
+      + '`unlock --continue` carries state forward instead of draining the script. It returns value '
+      + 'to the same address with a new datum given by --continue-datum, which is what makes a '
+      + 'validator a state machine rather than a one-shot escrow — an auction raising a bid, a '
+      + 'vesting schedule releasing a tranche, an order partially filled. The address is not asked '
+      + 'for and cannot be: a continuing output returns to the validator being spent, and a typo '
+      + 'would send the contract\'s state somewhere it can never be spent from again. `--pay` '
+      + 'covers the other half of that shape, an output to somebody who is not the spender — the '
+      + 'bidder being displaced, the party being refunded. Change cannot express it, because change '
+      + 'all returns to one address.\n\n'
+      + 'Execution budgets are declared with headroom over what the local evaluator computes. The '
+      + 'two Plutus implementations do not cost every step alike and the local one under-counts, so '
+      + 'a budget set to its exact figure can be refused by a node that then aborts the script part '
+      + 'way through — reported as though the validator were at fault. The margin costs a fraction '
+      + 'of a lovelace and removes the class of failure; `simulate` reports the figure that will be '
+      + 'declared.',
     flags: [
       { flag: '--blueprint <path>', description: 'path to plutus.json, or a directory holding one' },
       { flag: '--module <name>', description: 'module to select when several validators exist' },
       { flag: '--validator <name>', description: 'validator to select within that module' },
       { flag: '--params <json>', description: 'JSON array of compile-time parameters, in declared order' },
+      { flag: '--path <dir>', description: 'the project directory to work in — every subcommand; defaults to the current one' },
+      { flag: '--continue <ada>', description: 'value returned to the script, carrying its state forward (unlock)' },
+      { flag: '--continue-datum <json>', description: 'the new state on that continuing output (unlock)' },
+      { flag: '--pay <addr>:<ada>', description: 'pay a third party in the same transaction — a refund, a payout (unlock); comma-separate several' },
       { flag: '--amount <ada>', description: 'how much to lock' },
       { flag: '--datum-signer', description: 'datum holding your own public key hash (lock)' },
       { flag: '--datum <json>', description: 'datum as Plutus data JSON (lock); the original datum (unlock, hash-stored only)' },
@@ -273,7 +292,6 @@ export const COMMANDS: CommandDoc[] = [
       { flag: '--redeemer-message <text>', description: 'redeemer of one text field (unlock)' },
       { flag: '--redeemer <json>', description: 'redeemer as Plutus data JSON (unlock)' },
       { flag: '--tx-in <hash>#<ix>', description: 'which script UTxO to spend when several exist' },
-      { flag: '--path <dir>', description: 'project directory for build and check' },
       { flag: '--name <text>', description: 'asset name (mint)' },
       { flag: '--qty <n>', description: 'quantity; negative burns (mint)' },
       { flag: '--spend <hash>#<ix>', description: 'UTxO the policy requires be consumed (mint)' },
@@ -318,6 +336,7 @@ export const COMMANDS: CommandDoc[] = [
       + 'reported as misrepresented and refused.',
     flags: [
       { flag: '--with <addr>', description: 'the counterparty (build)' },
+      { flag: '--offer <blob>', description: 'the offer, when not passed as a positional argument' },
       { flag: '--give <spec>', description: 'what you give: "10ADA" or "<unit>:<qty>", comma-separated' },
       { flag: '--want <spec>', description: 'what you want back, same format' },
     ],
@@ -330,13 +349,30 @@ export const COMMANDS: CommandDoc[] = [
   },
   {
     name: 'address',
-    usage: 'ada address inspect <addr>',
-    summary: 'Decode an address into its parts',
+    usage: 'ada address <inspect|derive> <addr|wallet>',
+    summary: 'Decode an address, or derive one at a chosen path',
     implemented: true,
     detail:
-      'Classifies an address as base, enterprise or stake and shows its credentials. Derivation is '
-      + 'deliberately absent: it is delegated to the official cardano-address tool rather than gaining '
-      + 'a second implementation that could disagree with the authoritative one.',
+      'Classifies an address as base, enterprise or stake and shows its credentials.\n\n'
+      + '`derive` produces the address at a chosen CIP-1852 path, which is how you reach an '
+      + 'account or index other than the wallet\'s default. It does not implement derivation: it '
+      + 'shells out to IntersectMBO\'s `cardano-address`, because this is the highest-consequence '
+      + 'cryptography here — an address derived wrongly does not fail, it succeeds at the wrong '
+      + 'place, and funds sent there are gone. A second implementation could only ever disagree '
+      + 'with the authoritative one, so the tool makes that one convenient instead.\n\n'
+      + 'The staking key always comes from role 2 at index 0, which is what CIP-1852 specifies: a '
+      + 'base address pairs one payment key with the account\'s single staking key, so the role-2 '
+      + 'path does not vary with the payment index.',
+    flags: [
+      { flag: '--account <n>', description: "CIP-1852 account index; defaults to the wallet's own" },
+      { flag: '--index <n>', description: 'address index within the account (default 0)' },
+      { flag: '--role <n>', description: '0 for external addresses, 1 for change (default 0)' },
+    ],
+    examples: [
+      'ada address inspect addr_test1...',
+      'ada address derive alice --index 3',
+      'ada address derive alice --account 1 --role 1 --json',
+    ],
   },
   {
     name: 'config',

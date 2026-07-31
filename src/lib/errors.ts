@@ -14,6 +14,16 @@ export class AdaError extends Error {
     message: string,
     readonly exitCode: number,
     readonly hint?: string,
+    /**
+     * The underlying tool's own words, kept verbatim.
+     *
+     * A translated message says what went wrong in general; this says what the
+     * thing that actually failed reported. For a rejected validator that is the
+     * Aiken `trace` naming the condition that did not hold — the single most
+     * useful line available, and it was being discarded in favour of prose that
+     * could only ever list the possibilities.
+     */
+    readonly detail?: string,
   ) {
     super(message);
     this.name = 'AdaError';

@@ -10,6 +10,7 @@ import { hasFlag } from '../lib/argv.ts';
 import { writeJson } from '../lib/json-output.ts';
 import { openActive, openNetwork } from '../lib/active-wallet.ts';
 import { formatAda, lovelaceToAda, sumLovelace, LOVELACE_UNIT } from '../lib/amount.ts';
+import { summariseAssets, formatAsset } from '../lib/assets.ts';
 import { fields, heading } from '../ui/format.ts';
 import { dim } from '../ui/colors.ts';
 
@@ -41,10 +42,7 @@ export default async function balance(args: Args): Promise<void> {
   }
 
   const lovelace = sumLovelace(assets);
-  const native = assets
-    .filter((a) => a.unit !== LOVELACE_UNIT && a.unit !== '')
-    .map((a) => ({ unit: a.unit, quantity: a.quantity }))
-    .sort((a, b) => a.unit.localeCompare(b.unit)); // deterministic ordering
+  const native = summariseAssets(assets);
 
   if (json) {
     writeJson({
@@ -69,6 +67,9 @@ export default async function balance(args: Args): Promise<void> {
 
   if (native.length > 0) {
     process.stdout.write('\n' + heading('Native assets') + '\n');
-    for (const a of native) process.stdout.write(`  ${a.quantity.padStart(12)}  ${a.unit}\n`);
+    for (const a of native) {
+      process.stdout.write(`  ${a.quantity.padStart(12)}  ${formatAsset(a.unit)}\n`);
+    }
+    process.stdout.write(dim('  names are decoded from the unit; --json carries the full unit') + '\n');
   }
 }

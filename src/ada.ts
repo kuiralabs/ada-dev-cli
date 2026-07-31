@@ -9,7 +9,8 @@ import { toAdaError } from './lib/errors.ts';
 import { EXIT_INVALID_ARGS } from './lib/exit-codes.ts';
 import { writeJsonError, setCurrentCommand } from './lib/json-output.ts';
 import { PKG_VERSION } from './lib/pkg.ts';
-import { loaderFor } from './lib/commands.ts';
+import { loaderFor, commandNames } from './lib/commands.ts';
+import { validateFlags, nearest } from './lib/flags.ts';
 import { errorBlock } from './ui/format.ts';
 
 const args = parseArgs();
@@ -22,7 +23,8 @@ if (hasFlag(args, 'version') || hasFlag(args, 'v')) {
 
 // `--help` anywhere routes to help rather than to the named command, so a
 // half-remembered invocation explains itself instead of doing something.
-if (hasFlag(args, 'help') || hasFlag(args, 'h')) {
+const askedForHelp = hasFlag(args, 'help') || hasFlag(args, 'h');
+if (askedForHelp) {
   args.positionals = args.command ? [args.command] : [];
   args.command = 'help';
 }
@@ -34,21 +36,27 @@ const loader = loaderFor(command);
 
 if (!loader) {
   const message = `unknown command: ${command}`;
-  const hint = 'run `ada help` for the command list';
+  const close = nearest(command, commandNames());
+  const hint = close
+    ? `did you mean \`ada ${close}\`? run \`ada help\` for the full list`
+    : 'run `ada help` for the command list';
   if (jsonMode) writeJsonError('unknown_command', message, hint);
   else process.stderr.write(errorBlock(message, hint) + '\n');
   process.exit(EXIT_INVALID_ARGS);
 }
 
 try {
+  // Not when help was asked for: a half-remembered invocation should get the
+  // help it asked for, rather than being corrected on the way to it.
+  if (!askedForHelp) validateFlags(command, args);
   const mod = await loader();
   await mod.default(args);
 } catch (err) {
   const adaErr = toAdaError(err);
   if (jsonMode) {
-    writeJsonError(adaErr.code, adaErr.message, adaErr.hint);
+    writeJsonError(adaErr.code, adaErr.message, adaErr.hint, undefined, adaErr.detail);
   } else {
-    process.stderr.write(errorBlock(adaErr.message, adaErr.hint) + '\n');
+    process.stderr.write(errorBlock(adaErr.message, adaErr.hint, adaErr.detail) + '\n');
   }
   process.exit(adaErr.exitCode);
 }

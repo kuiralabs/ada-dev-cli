@@ -8,6 +8,7 @@
 import { parseArgs, type Args } from './argv.ts';
 import { setCaptureTarget, setCurrentCommand } from './json-output.ts';
 import { toAdaError } from './errors.ts';
+import { validateFlags } from './flags.ts';
 
 export interface CaptureResult {
   /** The JSON document the command produced, parsed. */
@@ -36,6 +37,10 @@ export async function captureCommand(
 
   try {
     const args = parseArgs([name, ...argv, '--json']);
+    // The same rejection the CLI applies. An agent inventing a plausible flag is
+    // more likely than a human typing one, and it has no output to notice was
+    // missing — so this matters more here, not less.
+    validateFlags(name, args);
     const mod = await loader();
     await mod.default(args);
   } catch (err) {
@@ -50,6 +55,7 @@ export async function captureCommand(
       code: adaErr.code,
       message: adaErr.message,
       ...(adaErr.hint ? { hint: adaErr.hint } : {}),
+      ...(adaErr.detail ? { detail: adaErr.detail } : {}),
     }));
   } finally {
     setCaptureTarget(null);

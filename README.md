@@ -100,7 +100,25 @@ Aiken validators, from compiling one to spending what it guards.
 | `ada contract publish` | A CIP-33 reference script — the honest reading of "deploy" |
 | `ada contract mint` | Mint or burn under a Plutus policy; a negative quantity burns |
 
-Run `ada help --json` for the current list — it marks which commands are implemented.
+Run `ada help --json` for the current list — it marks which commands are implemented, and
+`ada help <command>` lists every flag that command takes.
+
+**A validator that keeps state.** `unlock` can do more than drain a script. `--continue <ada>` with
+`--continue-datum <json>` returns value to the same address under a new datum, which is what makes a
+validator a state machine rather than a one-shot escrow — an auction taking a higher bid, a vesting
+schedule releasing one tranche, an order partially filled. `--pay <addr>:<ada>` covers the other half
+of that shape: an output to someone who is not the spender, such as the bidder being refunded.
+Change cannot express that, because change all goes back to one address.
+
+```sh
+# outbid the standing leader: new bid to the script, refund to whoever it displaces
+ada contract unlock --tx-in <ref> --redeemer '{"alternative":0,"fields":[]}' \
+  --continue 40 --continue-datum '{"alternative":0,"fields":["<bidder-hash>",40000000]}' \
+  --pay <displaced-addr>:25 --valid-until <slot> --yes
+```
+
+`--mint <name>:<qty>` builds a spend and a mint in one transaction, for validators that release
+funds only when a token is issued alongside.
 
 **Public testnets need no setup.** `--network preprod` or `--network preview` works on any read
 command with no account and no API key, via the free community API. Set `ADA_BLOCKFROST_KEY` if you
