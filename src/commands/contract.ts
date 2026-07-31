@@ -16,7 +16,7 @@ import { usageError, AdaError } from '../lib/errors.ts';
 import { EXIT_CHAIN_REJECTED } from '../lib/exit-codes.ts';
 import { writeJson } from '../lib/json-output.ts';
 import { openActive, type ActiveContext } from '../lib/active-wallet.ts';
-import { makeTxBuilder, makeEvaluator, withoutCostModelNoise, type Provider } from '../lib/mesh.ts';
+import { makeTxBuilder, makeEvaluator, costModelsFor, withoutCostModelNoise, type Provider } from '../lib/mesh.ts';
 import { signAndSubmit, translateBuildFailure, translateHorizon, selectCollateral, requiredCollateral, assertMeetsMinValue } from '../lib/tx-common.ts';
 import { adaToLovelace, formatAda, parseSignedQuantity, LOVELACE_UNIT } from '../lib/amount.ts';
 import { resolveValidity, assertValidityShape, parseOutputRefs, parseSigners, type ValidityWindow } from '../lib/validity.ts';
@@ -355,6 +355,8 @@ interface SpendContext {
   utxos: UTxO[];
   protocol: Awaited<ReturnType<Provider['fetchProtocolParameters']>>;
   evaluator: Awaited<ReturnType<typeof makeEvaluator>>;
+  /** The chain's, for the script integrity hash the ledger checks. */
+  costModels?: number[][];
   extras: TxExtras;
 }
 
@@ -484,16 +486,17 @@ async function prepareSpend(args: Args, ctx: ActiveContext): Promise<SpendContex
   const protocol = await ctx.provider.fetchProtocolParameters();
   const collateral = pledgeCollateral(utxos, protocol);
   const evaluator = await makeEvaluator(ctx.provider, ctx.network);
+  const { models: costModels } = await costModelsFor(ctx.network);
   const extras = await anchorValidity(extraFlags, ctx);
 
-  return { identity, code, target, redeemer, datumMode, collateral, utxos, protocol, evaluator, extras };
+  return { identity, code, target, redeemer, datumMode, collateral, utxos, protocol, evaluator, costModels, extras };
 }
 
 /** Build the spending transaction. One definition, two callers. */
 async function buildSpend(ctx: ActiveContext, spend: SpendContext): Promise<string> {
   const signerHash = await pubKeyHashOf(ctx);
   try {
-    const b = makeTxBuilder(ctx.provider, { withScripts: true, evaluator: spend.evaluator })
+    const b = makeTxBuilder(ctx.provider, { withScripts: true, evaluator: spend.evaluator, costModels: spend.costModels })
       .spendingPlutusScript(spend.identity.version)
       .txIn(spend.target.input.txHash, spend.target.input.outputIndex,
             spend.target.output.amount, spend.target.output.address)
@@ -1004,6 +1007,7 @@ async function mint(args: Args): Promise<void> {
   const protocol = await ctx.provider.fetchProtocolParameters();
   const collateral = pledgeCollateral(utxos, protocol);
   const evaluator = await makeEvaluator(ctx.provider, ctx.network);
+  const { models: mintCostModels } = await costModelsFor(ctx.network);
 
   // A one-shot policy commonly requires a specific UTxO be spent, which is what
   // makes it one-shot: a UTxO can be spent once in all of history, so the mint
@@ -1017,7 +1021,7 @@ async function mint(args: Args): Promise<void> {
 
   let unsigned: string;
   try {
-    const b = makeTxBuilder(ctx.provider, { withScripts: true, evaluator });
+    const b = makeTxBuilder(ctx.provider, { withScripts: true, evaluator, costModels: mintCostModels });
     if (seed) b.txIn(seed.input.txHash, seed.input.outputIndex, seed.output.amount, seed.output.address);
 
     b.mintPlutusScript(identity.version)

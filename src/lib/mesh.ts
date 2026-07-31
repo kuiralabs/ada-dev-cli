@@ -138,22 +138,14 @@ export interface TxBuilderOptions {
   withScripts?: boolean;
   /** The evaluator, when the transaction contains a script. See {@link makeEvaluator}. */
   evaluator?: OfflineEvaluatorScalus;
+  /**
+   * The chain's cost models, for the script integrity hash.
+   *
+   * Required whenever a script runs: the hash is computed over them, so the
+   * builder's defaults produce a transaction the ledger refuses.
+   */
+  costModels?: number[][];
 }
-
-/**
- * How many parameters each Plutus cost model is supposed to have.
- *
- * Fixed by the ledger rather than by the network: a V1 script is priced by the
- * same 166 numbers everywhere, which is what makes a script's cost reproducible.
- * Confirmed against the devnet's own Alonzo genesis, which declares 166 and 175.
- *
- * V3 has grown across protocol versions, so several counts are legitimate.
- */
-export const EXPECTED_COST_MODEL_SIZES: Record<number, number[]> = {
-  0: [166],            // PlutusV1
-  1: [175],            // PlutusV2
-  2: [251, 297, 300],  // PlutusV3, across protocol versions
-};
 
 export interface CostModelResult {
   models?: number[][];
@@ -165,20 +157,22 @@ export interface CostModelResult {
  * Cost models for the chain we are actually on.
  *
  * MeshJS's own `fetchCostModels` is a stub that throws on **both** providers we
- * default to, and its fallback is silent: mainnet cost models, one warning, wrong
- * arithmetic for fees as well as execution budgets.
+ * default to, so without this the builder silently uses its built-in mainnet
+ * defaults — and that is not a cosmetic problem. The **script integrity hash**
+ * a transaction carries is computed over the cost models of the languages it
+ * uses, so wrong models produce a hash the ledger disagrees with and the
+ * transaction is rejected with `ScriptIntegrityHashMismatch`. Confirmed on
+ * preprod, where the defaults fail and the chain's own models succeed.
  *
- * So we fetch them — but we do not trust them blindly, because the two providers
- * do not agree. Yaci returns them keyed by parameter name and the counts match
- * the ledger exactly. Koios returns them keyed by numeric index and reports 332
- * for PlutusV1, where the ledger fixes it at 166. A wrong cost model does not
- * fail loudly; it produces a wrong execution budget, which means either overpaying
- * or a script that aborts mid-run and forfeits its collateral.
+ * **The counts vary by network and protocol version.** A devnet from an older
+ * genesis reports 166/175/297; preprod reports 332/332/350. An earlier version of
+ * this function rejected the larger figures as implausible, on the false premise
+ * that the ledger fixes them — that guard would have blocked the very models that
+ * make preprod work. Whatever the chain reports about itself is what the chain
+ * uses to check the hash.
  *
- * When the shape is implausible we say so and let the evaluator use its built-in
- * defaults, which are mainnet's — and mainnet's are what a public testnet mirrors.
- * The important part is that this is now a decision with a reason attached rather
- * than a silent fallback.
+ * The two providers differ only in key type: Yaki names each parameter, Koios
+ * numbers them. Both enumerate in the canonical order, which is what matters.
  */
 export async function fetchCostModels(network: ResolvedNetwork): Promise<CostModelResult> {
   const url = network.isLocal
@@ -202,14 +196,8 @@ export async function fetchCostModels(network: ResolvedNetwork): Promise<CostMod
   const models = (['PlutusV1', 'PlutusV2', 'PlutusV3'] as const)
     .map((v) => Object.values(raw[v] ?? {}));
 
-  for (const [index, sizes] of Object.entries(EXPECTED_COST_MODEL_SIZES)) {
-    const got = models[Number(index)]?.length ?? 0;
-    if (got !== 0 && !sizes.includes(got)) {
-      return {
-        rejected: `PlutusV${Number(index) + 1} came back with ${got} parameters, `
-          + `and the ledger fixes it at ${sizes.join(' or ')}`,
-      };
-    }
+  if (models.every((m) => m.length === 0)) {
+    return { rejected: `${network.name} returned empty cost models` };
   }
 
   return { models };
@@ -236,11 +224,11 @@ export async function makeEvaluator(
   // Plutus VM, and loading it took ~16s — a cost every command touching this file
   // paid, including ones that never evaluate anything.
   const { OfflineEvaluatorScalus } = await import('@meshsdk/core-cst');
-  const { models, rejected } = await fetchCostModels(network);
+  const { models, rejected } = await costModelsFor(network);
 
   if (rejected) {
-    // Not silent. The evaluator's own defaults are mainnet's, which a public
-    // testnet mirrors closely — but the caller should know an assumption was made.
+    // Not silent: a fallback the caller cannot see is how a wrong number becomes
+    // a mystery later.
     process.stderr.write(dim(`  note: using built-in cost models — ${rejected}\n`));
   }
 
@@ -250,12 +238,24 @@ export async function makeEvaluator(
 /** A transaction builder wired to the same provider, so fees and coin selection
  *  use the live protocol parameters rather than defaults. */
 export function makeTxBuilder(provider: Provider, opts: TxBuilderOptions = {}): MeshTxBuilder {
-  return new MeshTxBuilder({
+  const b = new MeshTxBuilder({
     fetcher: provider,
     submitter: provider,
     ...(opts.withScripts && opts.evaluator ? { evaluator: opts.evaluator } : {}),
     verbose: false,
   });
+
+  // **The builder needs the chain's cost models, not only the evaluator.**
+  //
+  // The script integrity hash a transaction carries is computed over the cost
+  // models of the languages it uses. Leave the builder to its built-in defaults
+  // and the hash disagrees with the ledger's, which rejects the transaction with
+  // ScriptIntegrityHashMismatch — regardless of whether the script itself would
+  // have passed. This is not the same set the evaluator uses for budgets, and
+  // getting one right while leaving the other wrong looks like a validator bug.
+  if (opts.costModels) b.setCostModels(opts.costModels);
+
+  return b;
 }
 
 export interface ChainTip {
@@ -356,4 +356,22 @@ export async function addressesOf(wallet: MeshWallet): Promise<{ payment: string
   const payment = await wallet.getChangeAddress();
   const rewards = await wallet.getRewardAddresses();
   return { payment, stake: rewards[0] ?? '' };
+}
+
+/**
+ * Cost models, fetched once per network and remembered.
+ *
+ * Both the evaluator and the transaction builder need them, and the builder needs
+ * them for a reason easy to miss: the script integrity hash it computes covers
+ * them, so a transaction built with the wrong ones is rejected outright regardless
+ * of whether the script would have passed.
+ */
+const costModelCache = new Map<string, CostModelResult>();
+
+export async function costModelsFor(network: ResolvedNetwork): Promise<CostModelResult> {
+  const cached = costModelCache.get(network.name);
+  if (cached) return cached;
+  const result = await fetchCostModels(network);
+  costModelCache.set(network.name, result);
+  return result;
 }

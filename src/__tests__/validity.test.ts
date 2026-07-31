@@ -159,18 +159,3 @@ describe('chain rejections are made readable', () => {
       .toContain('ValueNotConservedUTxO');
   });
 });
-
-describe('cost models are validated, not trusted', () => {
-  // The two providers disagree. Yaci keys them by parameter name and the counts
-  // match the ledger; Koios keys them by numeric index and reports 332 for
-  // PlutusV1, which the ledger fixes at 166. A wrong cost model does not fail
-  // loudly — it produces a wrong execution budget, meaning either an overpaid fee
-  // or a script that aborts mid-run and forfeits its collateral.
-  it('knows the counts the ledger fixes', async () => {
-    const { EXPECTED_COST_MODEL_SIZES } = await import('../lib/mesh.ts') as any;
-    // Confirmed against the devnet's own Alonzo genesis.
-    expect(EXPECTED_COST_MODEL_SIZES[0]).toContain(166);
-    expect(EXPECTED_COST_MODEL_SIZES[1]).toContain(175);
-    expect(EXPECTED_COST_MODEL_SIZES[2]).toContain(297);
-  });
-});
