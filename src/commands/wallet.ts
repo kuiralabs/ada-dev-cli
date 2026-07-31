@@ -154,7 +154,14 @@ async function info(args: Args): Promise<void> {
   const json = hasFlag(args, 'json');
   const config = loadConfig();
   const network = resolveNetwork(config, flagValue(args, 'network'));
-  const name = args.positionals[1] ?? config.activeWallet;
+  // Precedence: a positional, then --wallet, then the active wallet.
+  //
+  // --wallet was ignored here, so `wallet info --wallet bob` reported the active
+  // wallet's address with ok:true — the same defect review already found in
+  // `balance` and `utxos`, missed in this one. A flag that silently selects the
+  // wrong account is worse than one that does not exist, and here it means
+  // reading somebody else's address and building a datum around it.
+  const name = args.positionals[1] ?? flagValue(args, 'wallet') ?? config.activeWallet;
   if (!name) {
     throw configError('no wallet selected', 'pass a name, or set one with: ada wallet use <name>');
   }

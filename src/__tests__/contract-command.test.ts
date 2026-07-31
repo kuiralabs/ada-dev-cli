@@ -338,3 +338,22 @@ describe('flags that cannot work are named, never ignored', () => {
       .catch((e: AdaError) => expect(e.hint).toMatch(/checked by a validator/));
   });
 });
+
+describe('--wallet must never be silently ignored', () => {
+  // Review once found `balance` and `utxos` ignoring it: `balance --wallet bob`
+  // reported alice's balance with ok:true. `wallet info` had the same defect and
+  // was missed, which a preprod run then caught the hard way — a test built a
+  // datum around the wrong account's key and the validator rejected the spend.
+  //
+  // A flag that selects the wrong account is worse than one that does not exist.
+  const source = readFileSync(new URL('../commands/wallet.ts', import.meta.url), 'utf8');
+
+  it('resolves a name from the positional, then --wallet, then the active one', () => {
+    expect(source).toContain("args.positionals[1] ?? flagValue(args, 'wallet') ?? config.activeWallet");
+  });
+
+  it('never falls straight from a positional to the active wallet', () => {
+    // The shape of the original bug.
+    expect(source).not.toMatch(/positionals\[1\]\s*\?\?\s*config\.activeWallet/);
+  });
+});
