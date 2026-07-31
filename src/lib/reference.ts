@@ -72,8 +72,66 @@ export const COMMANDS: CommandDoc[] = [
     examples: ['ada status', 'ada status --network preprod --json'],
   },
   {
+    name: 'dev',
+    usage: 'ada dev [--path <dir>]',
+    summary: 'Watch Aiken sources and rebuild, warning when the address moves',
+    implemented: true,
+    detail:
+      'Watches validators/ and lib/ for .ak changes and runs `aiken check` on each save, '
+      + 'reporting the tests and the script hash.\n\n'
+      + '**The reason it exists is the address.** A validator has no identity apart from its '
+      + 'compiled code — the address is a hash of it — so every source edit moves the address. '
+      + 'Anything locked at the old one cannot be spent by the new build, and nothing says so: '
+      + '`contract address` reports the new address perfectly happily and the funds at the old one '
+      + 'simply stop being mentioned. This loop says the address changed, and how much is sitting '
+      + 'at the address you just left behind.\n\n'
+      + 'A validator taking compile-time parameters has no single address until they are applied, '
+      + 'so pass --params to have the address tracked; without them the hash is still reported. '
+      + 'With several validators in one blueprint, --module and --validator choose which to follow.\n\n'
+      + 'Rebuilds are debounced and serialised: an editor writes a file several times per save, and '
+      + 'a compile started while the previous one is running races on plutus.json. In --json mode '
+      + 'each rebuild emits one document, so the output is a stream rather than a single result.',
+    flags: [
+      { flag: '--path <dir>', description: 'the project to watch; defaults to the current directory' },
+      { flag: '--params <json>', description: 'compile-time parameters, so the address can be tracked' },
+      { flag: '--module <name>', description: 'module to follow when several validators exist' },
+      { flag: '--validator <name>', description: 'validator to follow within that module' },
+      { flag: '--blueprint <path>', description: 'path to plutus.json, if not beside the sources' },
+    ],
+    examples: [
+      'ada dev',
+      'ada dev --path ./bounty_board',
+      'ada dev --params \'["<hash>",1785481194000,2000000]\'',
+    ],
+  },
+  {
     name: 'tip', usage: 'ada tip', summary: 'Current chain tip', implemented: true,
     examples: ['ada tip', 'ada tip --network preprod --json'],
+  },
+  {
+    name: 'tx',
+    usage: 'ada tx status <hash>',
+    summary: 'Where a transaction has got to: on-chain, queued, or gone',
+    implemented: true,
+    detail:
+      'Submitting returns a hash and nothing else, and from there the only way to find out what '
+      + 'happened was to poll a balance and infer. Inference cannot tell the two failures apart: a '
+      + 'transaction still queued and one that was dropped are both simply absent from the chain.\n\n'
+      + 'Three states, and they call for different actions — `on-chain` (done), `in-mempool` '
+      + '(accepted, do nothing), and `not-found` (never submitted or dropped, so the retry is '
+      + 'yours). Telling the middle one from the last needs a node: an indexer cannot see a '
+      + 'mempool. Where Ogmios is reachable this asks it; where it is not, the answer says so '
+      + 'rather than guessing, because "queued" and "gone" look identical from outside.\n\n'
+      + '`--wait` polls until the transaction confirms or three minutes pass. Without a mempool to '
+      + 'consult it degrades to the poll you would have written anyway.',
+    flags: [
+      { flag: '--wait', description: 'keep checking until it confirms, or three minutes pass' },
+    ],
+    examples: [
+      'ada tx status 4a9412c72e5eaac1...',
+      'ada tx status <hash> --wait',
+      'ada tx status <hash> --network preprod --json',
+    ],
   },
   {
     name: 'slot',

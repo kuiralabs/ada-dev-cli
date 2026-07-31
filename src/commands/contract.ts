@@ -920,7 +920,8 @@ function translateScriptFailure(err: unknown, scriptAddress: string): AdaError {
       EXIT_CHAIN_REJECTED,
       'the datum, the redeemer, or a condition on the transaction itself did not satisfy it — '
       + 'check the redeemer against `ada contract inspect`, and that you are signing with the key the datum names. '
-      + '`ada contract simulate --verify-budget` asks a node what it makes of the same transaction',
+      + 'For a second opinion, `ada contract simulate --verify-budget` asks a node about the same transaction '
+      + 'where one is reachable — `ada status` says whether it is, and docs/DEVNET.md how to run one',
       scriptDetail(message));
   }
   if (/exceeded|budget|ExUnits|max.*ex/i.test(message)) {

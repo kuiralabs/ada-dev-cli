@@ -11,6 +11,7 @@ import { loadConfig, resolveNetwork, configPath } from '../lib/cli-config.ts';
 import { makeProvider, fetchTip } from '../lib/mesh.ts';
 import { writeJson } from '../lib/json-output.ts';
 import { probeOgmios } from '../lib/ogmios.ts';
+import { dim } from '../ui/colors.ts';
 import { listWallets } from '../lib/wallet-store.ts';
 import { devnetPid, isProcessAlive, devnetLogPath } from '../lib/yaci.ts';
 import { PKG_VERSION } from '../lib/pkg.ts';
@@ -86,10 +87,17 @@ export default async function status(args: Args): Promise<void> {
         ? `STALLED — height ${tip?.height ?? '?'}, last block ${Math.round((tipAgeMs ?? 0) / 1000)}s ago`
         : `advancing, height ${tip?.height ?? '?'}`],
     ...(network.isLocal ? [['devnet', processAlive ? `running (pid ${pid})` : 'not running'] as [string, string]] : []),
-    // Only when something is actually answering. Ogmios is optional, and a line
-    // saying so on every status would be noise for the people who never want it
-    // — but when it is there, --verify-budget works and that is worth knowing.
-    ...(ogmios.reachable ? [['ogmios', `answering at ${ogmios.url}`] as [string, string]] : []),
+    // Reported either way on a local chain, and this is the one place that is
+    // right. `status` is a health report somebody asked for, so naming an
+    // optional component that is not running is information rather than noise —
+    // and it is the only place a developer who has never heard of Ogmios will
+    // find out it exists. Public networks are not listed: we do not run their
+    // infrastructure and an absence there says nothing.
+    ...(network.isLocal
+      ? [['ogmios', ogmios.reachable
+          ? `answering at ${ogmios.url}`
+          : dim('not running — optional second opinion on script costs, see docs/DEVNET.md')] as [string, string]]
+      : ogmios.reachable ? [['ogmios', `answering at ${ogmios.url}`] as [string, string]] : []),
     ['wallet', activeWallet ?? 'none selected'],
     ['wallets', String(wallets.length)],
   ]) + '\n');

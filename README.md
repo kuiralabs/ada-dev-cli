@@ -99,9 +99,19 @@ Aiken validators, from compiling one to spending what it guards.
 | `ada contract simulate` | Execution units and fee, without submitting |
 | `ada contract publish` | A CIP-33 reference script — the honest reading of "deploy" |
 | `ada contract mint` | Mint or burn under a Plutus policy; a negative quantity burns |
+| `ada dev` | Watch `.ak` sources, rebuild on save, and warn when the address moves |
+| `ada tx status` | Where a transaction got to: on-chain, queued in the mempool, or gone |
 
 Run `ada help --json` for the current list — it marks which commands are implemented, and
 `ada help <command>` lists every flag that command takes.
+
+**The address moves every time you edit.** A validator has no identity apart from
+its compiled code — the address *is* a hash of it — so any source change puts your
+contract somewhere else, and anything locked at the old address cannot be spent by
+the new build. Nothing says so on its own: `contract address` reports the new one
+happily and the funds at the old one stop being mentioned. `ada dev` watches for
+saves, reruns the tests, and says when the address changed and how much was left
+behind.
 
 **A validator that keeps state.** `unlock` can do more than drain a script. `--continue <ada>` with
 `--continue-datum <json>` returns value to the same address under a new datum, which is what makes a

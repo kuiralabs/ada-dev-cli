@@ -41,7 +41,7 @@ const WALLET_AWARE: readonly string[] = ['airdrop', 'asset', 'balance', 'contrac
 
 /** Commands that resolve a network but no wallet. */
 const NETWORK_AWARE: readonly string[] = [
-  'address', 'config', 'info', 'localnet', 'params', 'slot', 'status', 'tip', 'wallet',
+  'address', 'config', 'dev', 'info', 'localnet', 'params', 'slot', 'status', 'tip', 'tx', 'wallet',
 ];
 
 /**
@@ -59,6 +59,7 @@ const COMMAND_FLAGS: Readonly<Record<string, readonly string[]>> = {
   asset: ['description', 'name', 'qty', 'yes'],
   balance: [],
   config: [],
+  dev: ['blueprint', 'module', 'validator', 'params', 'path'],
   contract: [
     'amount', 'blueprint', 'continue', 'continue-datum', 'cross-check', 'datum', 'datum-hash', 'datum-signer',
     'mint', 'mint-redeemer', 'module', 'name', 'params', 'path', 'pay', 'qty', 'read-only',
@@ -75,6 +76,7 @@ const COMMAND_FLAGS: Readonly<Record<string, readonly string[]>> = {
   status: [],
   swap: ['give', 'offer', 'want', 'with', 'yes'],
   tip: [],
+  tx: ['wait'],
   transfer: ['lovelace', 'yes'],
   utxos: [],
   wallet: ['force', 'show-mnemonic', 'wallet', 'yes'],

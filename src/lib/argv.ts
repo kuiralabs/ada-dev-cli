@@ -20,6 +20,7 @@ const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   'yes',
   'y',
   'force',
+  'wait',
 ]);
 
 /**
