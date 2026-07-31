@@ -9,7 +9,8 @@ import { describe, it, expect } from 'vitest';
 import { parseArgs } from '../lib/argv.ts';
 import { AdaError } from '../lib/errors.ts';
 import { requiredCollateral } from '../lib/tx-common.ts';
-import contract from '../commands/contract.ts';
+import contract, { datumModeOf } from '../commands/contract.ts';
+import type { UTxO } from '@meshsdk/core';
 import { TOOLS, CONSENT_TOOLS, byName } from '../lib/mcp/tools.ts';
 
 const run = (argv: string[]) => contract(parseArgs(['contract', ...argv]));
@@ -156,5 +157,69 @@ describe('the agent surface covers every contract subcommand', () => {
   it('omits flags that were not supplied, rather than sending empty ones', () => {
     const argv = byName('ada_contract_inspect')!.toArgv!({});
     expect(argv).toEqual(['inspect']);
+  });
+});
+
+describe('the datum encoding decides how it must be supplied back', () => {
+  // Both branches are now exercised against a real chain — a --datum-hash lock
+  // followed by an unlock that refuses without the datum and succeeds with it —
+  // but the decision itself is pure and belongs in a fast test.
+  const at = (output: Record<string, unknown>): UTxO => ({
+    input: { txHash: 'abc123', outputIndex: 0 },
+    output: { address: 'addr_test1w...', amount: [{ unit: 'lovelace', quantity: '5000000' }], ...output },
+  } as UTxO);
+
+  it('uses the inline datum when the output carries one', () => {
+    const mode = datumModeOf(at({ plutusData: 'd8799f581c52ff' }), undefined);
+    expect(mode.inline).toBe(true);
+  });
+
+  it('ignores a supplied datum when an inline one is present', () => {
+    // The output is authoritative. Preferring a flag over what the chain holds
+    // would let a caller present a datum the validator was not given.
+    expect(datumModeOf(at({ plutusData: 'd8799f581c52ff' }), '{"alternative":0,"fields":[]}').inline)
+      .toBe(true);
+  });
+
+  it('demands the original when the output stores only a hash', () => {
+    try {
+      datumModeOf(at({ dataHash: 'f21a6886d9badd82' }), undefined);
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AdaError).code).toBe('datum_required');
+      // No chain publishes the preimage, so "fetch it" is not advice we can give.
+      expect((e as AdaError).hint).toContain('--datum');
+    }
+  });
+
+  it('accepts the supplied datum for a hash-stored output', () => {
+    const mode = datumModeOf(at({ dataHash: 'f21a' }), '{"alternative":0,"fields":["52ff"]}');
+    expect(mode.inline).toBe(false);
+    expect(mode.value).toEqual({ alternative: 0, fields: ['52ff'] });
+  });
+
+  it('rejects malformed supplied datum JSON', () => {
+    expect(() => datumModeOf(at({ dataHash: 'f21a' }), '{oops')).toThrow(/not valid JSON/);
+  });
+
+  it('refuses an output with no datum at all', () => {
+    // A spending validator is always given a datum; an output without one cannot
+    // be spent by one, and saying so beats a builder error.
+    try {
+      datumModeOf(at({}), undefined);
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AdaError).code).toBe('no_datum');
+    }
+  });
+
+  it('treats an explicitly null datum as absent, not as inline', () => {
+    // The indexer returns nulls rather than omitting the fields.
+    try {
+      datumModeOf(at({ plutusData: null, dataHash: null }), undefined);
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AdaError).code).toBe('no_datum');
+    }
   });
 });

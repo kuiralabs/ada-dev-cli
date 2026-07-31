@@ -220,15 +220,22 @@ async function lock(args: Args): Promise<void> {
   assertMeetsMinValue(output.address, output.amount, params.coinsPerUtxoSize);
 
   const utxos = await ctx.wallet.getUtxos();
+
+  // Inline (CIP-32) by default: the datum travels on the output, so anyone can
+  // read it back. A hash-stored datum is never published — the spender must
+  // already hold it, and the devnet indexer serves no lookup for one. The
+  // encoding is supported anyway because the reference Aiken example uses it and
+  // a UTxO created by another tool may well carry one.
+  const asHash = hasFlag(args, 'datum-hash');
+
   const builder = makeTxBuilder(ctx.provider); // a lock is a plain payment — no script runs
   let unsigned: string;
   try {
-    unsigned = await withoutCostModelNoise(() => builder
-      .txOut(output.address, output.amount)
-      // Inline (CIP-32), not a datum hash. A hash-stored datum cannot be recovered
-      // from the chain — the spender must already hold it — and the devnet indexer
-      // serves no datum-by-hash lookup at all.
-      .txOutInlineDatumValue(datum.value as never)
+    const b = builder.txOut(output.address, output.amount);
+    if (asHash) b.txOutDatumHashValue(datum.value as never);
+    else b.txOutInlineDatumValue(datum.value as never);
+
+    unsigned = await withoutCostModelNoise(() => b
       .changeAddress(ctx.payment)
       .selectUtxosFrom(utxos)
       .complete());
@@ -247,7 +254,7 @@ async function lock(args: Args): Promise<void> {
       network: ctx.network.name, wallet: ctx.stored.name,
       scriptAddress: identity.address, scriptHash: identity.hash,
       ada: formatAda(lovelace), lovelace: lovelace.toString(),
-      datum: datum.describe, datumEncoding: 'inline',
+      datum: datum.describe, datumEncoding: asHash ? 'hash' : 'inline',
       submitted, ...(txHash ? { txHash } : {}),
     });
     return;
@@ -260,6 +267,7 @@ async function lock(args: Args): Promise<void> {
     ['to script', identity.address],
     ['amount', `${formatAda(lovelace)} ADA`],
     ['datum', datum.describe],
+    ['encoding', asHash ? 'hash — keep the datum, the chain will not store it' : 'inline'],
   ]) + '\n');
   if (!submitted) {
     process.stderr.write('\n' + dim('  Nothing submitted. Add --yes to send it.') + '\n');
@@ -437,7 +445,7 @@ const refOf = (u: UTxO): string => `${u.input.txHash}#${u.input.outputIndex}`;
  * front is the honest behaviour — the alternative is a build that appears to work
  * and is rejected at submission.
  */
-function datumModeOf(utxo: UTxO, supplied: string | undefined): { inline: boolean; value?: unknown } {
+export function datumModeOf(utxo: UTxO, supplied: string | undefined): { inline: boolean; value?: unknown } {
   const out = utxo.output as { plutusData?: string | null; dataHash?: string | null };
   if (out.plutusData) return { inline: true };
 

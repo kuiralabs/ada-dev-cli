@@ -164,8 +164,10 @@ export const COMMANDS: CommandDoc[] = [
       + 'part of validating the transaction consuming its output. Both are dry runs until --yes.\n\n'
       + 'Datums are inline (CIP-32) by default. A hash-stored datum cannot be recovered from the '
       + 'chain, so the spender must already hold it, and the devnet indexer serves no lookup for '
-      + 'one. Collateral is chosen automatically from a pure-ADA output; if every output in the '
-      + 'wallet carries a native asset the error says how to make one.',
+      + 'one. --datum-hash opts into that encoding anyway, since the reference Aiken example uses '
+      + 'it and a UTxO made by another tool may carry one; unlocking such an output then requires '
+      + 'the original datum via --datum. Collateral is chosen automatically from a pure-ADA output; '
+      + 'if every output in the wallet carries a native asset the error says how to make one.',
     flags: [
       { flag: '--blueprint <path>', description: 'path to plutus.json, or a directory holding one' },
       { flag: '--module <name>', description: 'module to select when several validators exist' },
@@ -173,7 +175,8 @@ export const COMMANDS: CommandDoc[] = [
       { flag: '--params <json>', description: 'JSON array of compile-time parameters, in declared order' },
       { flag: '--amount <ada>', description: 'how much to lock' },
       { flag: '--datum-signer', description: 'datum holding your own public key hash (lock)' },
-      { flag: '--datum <json>', description: 'datum as Plutus data JSON (lock)' },
+      { flag: '--datum <json>', description: 'datum as Plutus data JSON (lock); the original datum (unlock, hash-stored only)' },
+      { flag: '--datum-hash', description: 'store only the datum hash rather than inline (lock)' },
       { flag: '--redeemer-message <text>', description: 'redeemer of one text field (unlock)' },
       { flag: '--redeemer <json>', description: 'redeemer as Plutus data JSON (unlock)' },
       { flag: '--tx-in <hash>#<ix>', description: 'which script UTxO to spend when several exist' },

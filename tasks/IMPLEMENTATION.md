@@ -6,7 +6,7 @@ worse than none, because it gets trusted.
 Legend: `[x]` done and exercised against a real chain · `[ ]` not built · `[—]` deliberately not
 building it, reason given · `[!]` blocked by something outside this repo.
 
-**Now:** 17 commands · 29 MCP tools · 250 offline tests · stages 1–6 closed · stage 7 spine done
+**Now:** 17 commands · 29 MCP tools · 257 offline tests · stages 1–6 closed · stage 7 spine done
 (`inspect`, `address`, `lock`, `unlock`, verified on devnet) · publish held.
 
 ---
@@ -90,7 +90,7 @@ Midnight verbs would name operations this chain does not have.
 - [ ] **`contract utxos`** — what sits at the script address with datums decoded. This is the state
 - [ ] **`contract publish`** — a CIP-33 reference script: the only operation that genuinely publishes code once, and the honest reading of "deploy"
 - [ ] **`contract simulate`** — execution units without submitting, so a budget failure is found before a fee is paid
-- [x] **Inline datums are the default** — the devnet indexer serves no datum-by-hash endpoint, so a hash-stored datum cannot be recovered from the chain. Datum-hash mode must demand the datum up front rather than failing at spend time
+- [x] **Inline datums are the default, hash mode supported and proven** — no chain publishes the preimage of a hash-stored datum and the devnet indexer serves no lookup, so `unlock` demands the original up front rather than failing at spend time. Both branches verified on devnet: a `--datum-hash` lock, an unlock refused without `--datum`, and the same unlock succeeding with it
 - [x] **Collateral selected explicitly** — a pure-ADA UTxO, at 150% of fee. After any mint a wallet's outputs may all carry assets, and every script transaction then fails for a reason that looks nothing like its cause. The error must say how to make one
 - [x] **The script must be double-CBOR-wrapped before hashing** — proven on devnet: the blueprint's `compiledCode` hashes to a *different* address than `aiken blueprint address` reports. `applyParamsToScript` performs the wrapping, which is why the reference example calls it even with an empty parameter list. Omit it and the tool reports a wrong address confidently, and funds sent there are stranded until someone works out why
 - [x] **Seed cost models from the chain, on every network** — MeshJS's `fetchCostModels` is a *stub that throws* on both **Yaci and Koios**, so it silently falls back to **mainnet** cost models. Koios is our default for every public network, so this is not a devnet quirk. Both chains serve the real values — Koios at `epoch_params.cost_models`, Yaci at `epochs/latest/parameters` — so we fetch and pass them. This affects fee and budget arithmetic, not only evaluation

@@ -577,6 +577,7 @@ export const TOOLS: ToolDef[] = [
         ada: { type: 'string', description: 'Amount to lock, as a decimal string.' },
         datumSigner: { type: 'boolean', description: 'Datum holding this wallet\'s own public key hash. The common case.' },
         datum: { type: 'string', description: 'Datum as Plutus data JSON, for anything else.' },
+        datumHash: { type: 'boolean', description: 'Store only the datum hash rather than inline. The datum is then NOT recoverable from the chain and must be kept to spend the output.' },
         blueprint: { type: 'string' },
         module: { type: 'string' },
         validator: { type: 'string' },
@@ -590,6 +591,7 @@ export const TOOLS: ToolDef[] = [
     toArgv: (i) => {
       const argv = ['lock', '--amount', String(i.ada), ...blueprintArgv(i), ...paramsArgv(i), '--yes'];
       if (i.datumSigner) argv.push('--datum-signer');
+      if (i.datumHash) argv.push('--datum-hash');
       const d = str(i.datum);
       if (d) argv.push('--datum', d);
       const w = str(i.wallet);
