@@ -106,3 +106,4 @@ Caused by: java.net.BindException: Address already in use
 2026-07-29 21:39:10,022 [           main] WARN  org.jline                                - Unable to create a system terminal, creating a dumb terminal (enable debug logging for more information)
 2026-07-30 10:48:25,162 [           main] WARN  org.jline                                - Unable to create a system terminal, creating a dumb terminal (enable debug logging for more information)
 2026-07-30 12:23:23,821 [           main] WARN  org.jline                                - Unable to create a system terminal, creating a dumb terminal (enable debug logging for more information)
+2026-07-30 22:53:20,826 [           main] WARN  org.jline                                - Unable to create a system terminal, creating a dumb terminal (enable debug logging for more information)

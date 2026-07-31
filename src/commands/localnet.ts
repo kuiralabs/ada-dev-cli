@@ -5,7 +5,7 @@
 import type { Args } from '../lib/argv.ts';
 import { flagValue, hasFlag } from '../lib/argv.ts';
 import { loadConfig, resolveNetwork } from '../lib/cli-config.ts';
-import { usageError } from '../lib/errors.ts';
+import { usageError, AdaError } from '../lib/errors.ts';
 import { writeJson, writeJsonError } from '../lib/json-output.ts';
 import { fundedAddresses, type FundedAddress } from '../lib/genesis.ts';
 import { isReachable } from '../lib/http.ts';
@@ -23,7 +23,7 @@ import {
 import { fields, heading, ok, warn, emphasis } from '../ui/format.ts';
 import { dim } from '../ui/colors.ts';
 
-const SUBCOMMANDS = ['up', 'down', 'stop', 'status', 'logs', 'bootstrap', 'reset', 'addresses'] as const;
+const SUBCOMMANDS = ['up', 'down', 'stop', 'status', 'logs', 'bootstrap', 'reset', 'addresses', 'snapshot', 'rollback'] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number];
 
 export default async function localnet(args: Args): Promise<void> {
@@ -44,6 +44,8 @@ export default async function localnet(args: Args): Promise<void> {
     case 'bootstrap': return bootstrap(args);
     case 'reset': return reset(args);
     case 'addresses': return addresses(args);
+    case 'snapshot': return snapshot(args);
+    case 'rollback': return rollback(args);
   }
 }
 
@@ -384,4 +386,96 @@ async function addresses(args: Args): Promise<void> {
     process.stderr.write(`  ${f.address}\n    ${dim(`${f.ada} ADA`)}\n`);
   }
   process.stderr.write('\n' + dim('  These hold the devnet\'s starting funds. `ada airdrop` draws from them.') + '\n\n');
+}
+
+// ── snapshot / rollback ──────────────────────────────────────────────
+//
+// Mark a point in the chain's history and return to it. The reason this is worth
+// having is that some bugs only appear on a *specific* chain state — a stale
+// UTxO, a half-spent collateral, a datum written before a fix — and reproducing
+// one by replaying every transaction that led to it is slow and unreliable.
+//
+// Note that rolling back **stops and restarts the node**. It is not a cheap
+// operation and it is not atomic with anything else running against the chain.
+
+const ROLLBACK_API = '/local-cluster/api/devnet/rollback';
+
+async function callRollbackApi(adminUrl: string, path: string, what: string): Promise<string> {
+  const url = `${adminUrl.replace(/\/$/, '')}${ROLLBACK_API}/${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', signal: AbortSignal.timeout(120_000) });
+  } catch (err) {
+    throw new AdaError('devnet_api_failed', `could not ${what}: ${(err as Error).message}`,
+      EXIT_NOT_RUNNING, 'is the devnet running? try: ada localnet status');
+  }
+
+  const body = (await res.text()).trim();
+  if (res.status === 404) {
+    // The endpoint arrived in 0.11.0-beta1. An older devkit answers 404, and
+    // saying which version is needed beats reporting a missing page.
+    throw new AdaError('devkit_too_old',
+      `this devkit has no ${what} endpoint`, EXIT_NOT_RUNNING,
+      'snapshot and rollback need yaci-devkit 0.11.0-beta1 or newer');
+  }
+  if (!res.ok) {
+    throw new AdaError('devnet_api_failed', `could not ${what}: HTTP ${res.status}`,
+      EXIT_NOT_RUNNING, stripAnsi(body).slice(0, 200) || undefined);
+  }
+  return stripAnsi(body);
+}
+
+/** The devkit answers with terminal colour codes, which do not belong in JSON. */
+const stripAnsi = (text: string): string => text.replace(/\u001b\[[0-9;]*m/g, '').trim();
+
+function requireLocal(args: Args) {
+  const network = resolveNetwork(loadConfig(), flagValue(args, 'network'));
+  if (!network.isLocal || !network.adminUrl) {
+    throw usageError('only a local devnet can be snapshotted',
+      'a public network has no rewind');
+  }
+  return network;
+}
+
+async function snapshot(args: Args): Promise<void> {
+  const network = requireLocal(args);
+  const message = await callRollbackApi(network.adminUrl!, 'take-db-snapshot', 'take a snapshot');
+
+  if (hasFlag(args, 'json')) {
+    writeJson({ network: network.name, action: 'snapshot', detail: message });
+    return;
+  }
+  process.stderr.write(ok('snapshot taken') + '\n');
+  process.stderr.write(dim(`  ${message}`) + '\n');
+  process.stderr.write('\n' + dim('  Return to it with: ada localnet rollback --yes') + '\n\n');
+}
+
+async function rollback(args: Args): Promise<void> {
+  const network = requireLocal(args);
+
+  // Destructive, and unlike `reset` it is not obvious from the name how much is
+  // lost — everything after the snapshot, including transactions someone may be
+  // mid-way through relying on.
+  if (!hasFlag(args, 'yes')) {
+    if (hasFlag(args, 'json')) {
+      writeJson({
+        network: network.name, action: 'rollback', performed: false,
+        warning: 'every transaction after the snapshot will be discarded, and the node restarts',
+        hint: 'pass --yes to proceed',
+      });
+      return;
+    }
+    process.stderr.write(warn('rollback discards every transaction after the snapshot') + '\n');
+    process.stderr.write(dim('  The node stops and restarts. Pass --yes to proceed.') + '\n\n');
+    return;
+  }
+
+  const message = await callRollbackApi(network.adminUrl!, 'rollback-to-db-snapshot', 'roll back');
+
+  if (hasFlag(args, 'json')) {
+    writeJson({ network: network.name, action: 'rollback', performed: true, detail: message });
+    return;
+  }
+  process.stderr.write(ok('rolled back to the snapshot') + '\n');
+  process.stderr.write(dim('  The node is restarting; give it a few seconds.') + '\n\n');
 }

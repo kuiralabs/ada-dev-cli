@@ -44,7 +44,7 @@
     "test:chain": "vitest run src/__tests__/devnet"
   },
   "devDependencies": {
-    "@bloxbean/yaci-devkit": "^0.10.6",
+    "@bloxbean/yaci-devkit": "^0.11.0-beta1",
     "@types/node": "^22.19.13",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
