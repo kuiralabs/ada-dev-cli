@@ -17,6 +17,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { acceptedFlags } from '../../lib/flags.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, '..', '..', 'ada.ts');
@@ -52,8 +53,19 @@ const LOCAL_PROBE = 'http://localhost:8080/api/v1/blocks/latest';
 
 /** Run the CLI exactly as a user would, and parse the JSON contract. */
 function ada(args: string[]): Record<string, any> {
-  const withNetwork = [...args, '--network', NETWORK,
-    ...(WALLET && !args.includes('--wallet') ? ['--wallet', WALLET] : [])];
+  // Only the flags the command actually takes.
+  //
+  // This used to append `--wallet` to everything, which worked while unknown
+  // flags were silently ignored and stopped working the moment they were not:
+  // `ada tip --wallet x` became an error, the reachability probe failed, and the
+  // whole suite skipped itself reporting "preprod unreachable". Asked of the same
+  // specification the CLI validates against, so the two cannot disagree.
+  const accepts = acceptedFlags(args[0]) ?? [];
+  const withNetwork = [
+    ...args,
+    ...(accepts.includes('network') ? ['--network', NETWORK] : []),
+    ...(WALLET && accepts.includes('wallet') && !args.includes('--wallet') ? ['--wallet', WALLET] : []),
+  ];
   try {
     const out = execFileSync('npx', ['tsx', CLI, ...withNetwork, '--json'], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 300_000,
@@ -326,6 +338,21 @@ describe(`contract, against a live chain (${NETWORK})`, () => {
     expect(sim.executionUnits.steps).toBeGreaterThan(0);
     expect(sim.withinLimits).toBe(true);
     expect(sim.executionUnits.mem).toBeLessThanOrEqual(sim.limits.maxMem);
+
+    // The per-redeemer breakdown. Asserted because it was once dropped as a
+    // side effect of a refactor rather than as a decision — undocumented and
+    // untested, so nothing complained. A transaction running several scripts
+    // needs to know which of them is expensive, not only that one of them is.
+    expect(Array.isArray(sim.redeemers)).toBe(true);
+    expect(sim.redeemers.length).toBeGreaterThan(0);
+    expect(sim.redeemers[0].mem).toBeGreaterThan(0);
+    expect(sim.redeemers[0].steps).toBeGreaterThan(0);
+
+    // What the scripts cost and what the transaction declares are two different
+    // numbers, and reporting one as the other made two evaluators that agreed
+    // exactly look as though they disagreed.
+    expect(sim.declaredExecutionUnits.mem).toBeGreaterThanOrEqual(sim.executionUnits.mem);
+    expect(sim.declaredExecutionUnits.steps).toBeGreaterThanOrEqual(sim.executionUnits.steps);
 
     // Simulating must not consume what it simulates against.
     const still = ada(['contract', 'utxos', '--blueprint', BLUEPRINT]);

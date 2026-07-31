@@ -255,38 +255,38 @@ export async function makeEvaluator(
 }
 
 /**
- * How much headroom to add to an evaluated execution budget.
+ * How much headroom to add to the execution budget a build declares.
  *
- * The offline evaluator is a second implementation of the Plutus VM, and it does
- * not cost every step the way the node's does. It under-counts, and by enough to
- * matter: a settling auction validator was evaluated at 33,859,095 CPU here and
- * refused by the node, which aborted the script part way through for overspending.
+ * **Not because the evaluator is wrong.** It is not: given the finished
+ * transaction, our evaluator, a node asked through Ogmios, and `contract
+ * simulate` all return the same figure to the unit.
  *
- * Measured rather than assumed, by resubmitting the same transaction at
- * different multiples:
+ * The gap is that MeshJS declares a *draft's* budget. It evaluates while the
+ * transaction is still being assembled, writes those units into the redeemer,
+ * and then finishes building — adding the outputs that balance it. A validator
+ * whose cost depends on the finished transaction is therefore charged for
+ * something smaller than what the ledger will run. Measured on a settling
+ * auction whose validator sums the transaction's outputs:
  *
- *   1.0x  rejected -- overspent
- *   1.1x  rejected -- overspent
- *   2.0x  accepted
- *   4.0x  accepted
+ *   declared in the transaction   87,767 mem   29,702,744 steps
+ *   what the finished tx needs   102,021 mem   33,859,095 steps
  *
- * So the gap is a factor, not a rounding error, and a few percent of slack would
- * not have covered it.
+ * — a 14% shortfall, and the node aborts the script part way through rather
+ * than reporting an under-declared budget. It arrives as
+ * `ValidationTagMismatch (IsValid True) (FailedUnexpectedly …)`, which reads as
+ * "your validator is wrong", so the natural response is to debug a contract that
+ * was correct all along.
  *
- * The failure is also far worse than its size suggests. The node reports it as
- * `ValidationTagMismatch (IsValid True) (FailedUnexpectedly ...)`, which reads as
- * "your validator is wrong" -- so the natural response is to debug a contract
- * that was correct all along. That is what happened: the previous run recorded
- * this as an unexplained disagreement between the two evaluators and went
- * looking at the validity range instead.
+ * The margin is applied where Mesh reads the evaluator, so the figure it writes
+ * covers the finished transaction rather than the draft. Doubling is comfortably
+ * more than the shortfall observed and costs a fraction of a lovelace —
+ * execution units are a small part of a fee, and over-declaring cannot make a
+ * transaction invalid: the ledger charges what was declared and only rejects
+ * when the script needs more.
  *
- * Doubling is cheap. Execution units are a small part of a fee -- the auction's
- * script fee was 0.008 ADA, so the margin costs about eight thousandths of an
- * ADA -- and over-declaring cannot make a transaction invalid: the ledger
- * charges what was declared and only rejects when the script needs *more*.
- *
- * When it is still not enough the node now says so plainly rather than appearing
- * to blame the contract; see `chainDetail` in tx-common.
+ * `assertBudgetCovers` then checks the finished article, so a shortfall this
+ * does not absorb is reported here, in our own words, instead of by a node
+ * appearing to blame the contract.
  */
 const BUDGET_MARGIN = 2.0;
 
@@ -310,11 +310,22 @@ async function maxExUnits(provider: Provider): Promise<{ mem: number; steps: num
  * places that do read budgets (`simulate` and `unlock`) must not be able to
  * disagree about what was declared.
  */
+/**
+ * The unmargined evaluation, kept beside each wrapped evaluator.
+ *
+ * `assertBudgetCovers` has to compare the declared budget against what the
+ * transaction *actually* needs. Asking the wrapped evaluator would scale both
+ * sides of that comparison by the same margin, so it could never be satisfied —
+ * which is precisely what happened the first time.
+ */
+const RAW_EVALUATE = new WeakMap<object, OfflineEvaluatorScalus['evaluateTx']>();
+
 function withBudgetMargin(
   evaluator: OfflineEvaluatorScalus,
   limits: { mem: number; steps: number },
 ): OfflineEvaluatorScalus {
   const inner = evaluator.evaluateTx.bind(evaluator);
+  RAW_EVALUATE.set(evaluator, inner);
 
   evaluator.evaluateTx = async (...args: Parameters<OfflineEvaluatorScalus['evaluateTx']>) => {
     const actions = await inner(...args);
@@ -330,6 +341,113 @@ function withBudgetMargin(
   };
 
   return evaluator;
+}
+
+/**
+ * What a finished transaction declares its scripts may spend.
+ *
+ * Read back out of the CBOR rather than tracked on the way in, because the
+ * number that matters is the one the ledger will read — and the whole failure
+ * this guards against is the builder writing something other than what it
+ * evaluated.
+ */
+export async function declaredExUnits(txCbor: string): Promise<{ mem: number; steps: number }> {
+  const { Transaction } = await import('@meshsdk/core-cst');
+  const redeemers = Transaction.fromCbor(txCbor as never).witnessSet().redeemers();
+  if (!redeemers) return { mem: 0, steps: 0 };
+
+  let mem = 0;
+  let steps = 0;
+  for (const redeemer of redeemers.values()) {
+    const units = redeemer.exUnits();
+    mem += Number(units.mem());
+    steps += Number(units.steps());
+  }
+  return { mem, steps };
+}
+
+/**
+ * Refuse to submit a transaction whose declared budget cannot cover it.
+ *
+ * The ledger does not report an under-declared budget as such. It runs the
+ * script, runs out part way through, and reports a failed validation — which
+ * reads as a broken contract. This asks the question directly, before signing,
+ * so the answer names the real problem.
+ *
+ * Silent when the transaction runs no scripts, and silent when the evaluator
+ * cannot answer: this is a guard against a specific known failure, not a second
+ * gate that a transaction has to pass.
+ */
+/**
+ * What the scripts in a transaction actually cost, without the declared margin.
+ *
+ * The margined figure is what gets written into the transaction; this is what
+ * the node will independently arrive at. Reporting the first as though it were
+ * the second made `--verify-budget` show a disagreement of exactly the margin
+ * between two evaluators that agreed to the unit.
+ */
+export async function rawEvaluate(
+  evaluator: OfflineEvaluatorScalus,
+  txCbor: string,
+): Promise<{ total: { mem: number; steps: number }; actions: RedeemerCost[] }> {
+  const evaluate = RAW_EVALUATE.get(evaluator) ?? evaluator.evaluateTx.bind(evaluator);
+  const evaluated = await evaluate(txCbor, [], []);
+
+  // Per redeemer as well as the total: a transaction running several scripts
+  // gives one number that says it is too expensive and no indication which of
+  // them is responsible.
+  const actions: RedeemerCost[] = evaluated.map((a) => ({
+    tag: a.tag, index: a.index, mem: Number(a.budget.mem), steps: Number(a.budget.steps),
+  }));
+
+  return {
+    total: actions.reduce(
+      (sum, a) => ({ mem: sum.mem + a.mem, steps: sum.steps + a.steps }),
+      { mem: 0, steps: 0 },
+    ),
+    actions,
+  };
+}
+
+/** What one redeemer costs, kept separate so a multi-script failure names a culprit. */
+export interface RedeemerCost {
+  tag: unknown;
+  index: number;
+  mem: number;
+  steps: number;
+}
+
+export async function assertBudgetCovers(
+  evaluator: OfflineEvaluatorScalus,
+  txCbor: string,
+): Promise<void> {
+  let needed: { mem: number; steps: number };
+  try {
+    // The raw figure, not the margined one — see RAW_EVALUATE.
+    const evaluate = RAW_EVALUATE.get(evaluator) ?? evaluator.evaluateTx.bind(evaluator);
+    const actions = await evaluate(txCbor, [], []);
+    if (actions.length === 0) return;
+    needed = actions.reduce(
+      (total, a) => ({ mem: total.mem + Number(a.budget.mem), steps: total.steps + Number(a.budget.steps) }),
+      { mem: 0, steps: 0 },
+    );
+  } catch {
+    return; // Nothing to compare against; the chain remains the authority.
+  }
+
+  const declared = await declaredExUnits(txCbor);
+  if (declared.mem >= needed.mem && declared.steps >= needed.steps) return;
+
+  throw new AdaError(
+    'budget_under_declared',
+    'the transaction declares less execution budget than its scripts need',
+    EXIT_INTERNAL,
+    'this is a builder fault rather than anything wrong with the validator — the budget was '
+    + 'measured against a draft and the finished transaction costs more. Reported here because '
+    + 'a node would run the script, stop part way through, and report it as a failed validation',
+    `declared  ${declared.mem.toLocaleString()} mem, ${declared.steps.toLocaleString()} steps\n`
+    + `needed    ${needed.mem.toLocaleString()} mem, ${needed.steps.toLocaleString()} steps`,
+  );
 }
 
 /** A transaction builder wired to the same provider, so fees and coin selection

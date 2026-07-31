@@ -7,11 +7,12 @@
 // across files needs one source of truth — when the library rewords an error,
 // one copy gets fixed and the others silently degrade.
 
-import { getOutputMinLovelace, type UTxO } from '@meshsdk/core';
+import { getOutputMinLovelace, deserializeAddress, type UTxO } from '@meshsdk/core';
 import { AdaError } from './errors.ts';
-import { EXIT_CHAIN_REJECTED } from './exit-codes.ts';
+import { EXIT_CHAIN_REJECTED, EXIT_INVALID_ARGS } from './exit-codes.ts';
 import { lovelaceToAda, formatAda, LOVELACE_UNIT } from './amount.ts';
 import type { ActiveContext } from './active-wallet.ts';
+import type { NetworkName } from './cli-config.ts';
 
 /**
  * Patterns the transaction builder uses to report the two failures that actually
@@ -22,6 +23,50 @@ const BUILDER_FAILURES = {
   insufficientFunds: /insufficient|not enough|UTxO Balance Insufficient/i,
   belowMinValue: /minimum|min.?ada|min.?utxo|too small/i,
 } as const;
+
+/**
+ * Check an address we are about to send value to, properly.
+ *
+ * Every command that takes a recipient checked `startsWith('addr')` and no more,
+ * so a truncated paste — `addr_test1qpf8cud6exc` — passed, reached the
+ * transaction builder, and came back as `internal_error`. The tool blamed itself
+ * for what was plainly a typo, and the one place that got this right,
+ * `address inspect`, had the good message nobody else could reach:
+ * **a checksum failure usually means a truncated copy-paste.**
+ *
+ * Three checks, in the order that gives the most useful answer first: the shape,
+ * then the network, then the checksum. Network before checksum deliberately — a
+ * mainnet address on a testnet decodes perfectly, so a checksum-first order
+ * would report success on the check and leave the real mistake unmentioned.
+ */
+export function assertRecipient(
+  address: string,
+  options: { network?: NetworkName; what?: string } = {},
+): void {
+  const what = options.what ?? 'not a Cardano address';
+
+  if (!address.startsWith('addr')) {
+    throw new AdaError('invalid_args', `${what}: ${address}`, EXIT_INVALID_ARGS,
+      'expected a bech32 address beginning with addr or addr_test');
+  }
+
+  if (options.network && options.network !== 'mainnet' && !address.startsWith('addr_test')) {
+    throw new AdaError('invalid_args',
+      `that is a mainnet address, but the active network is ${options.network}`,
+      EXIT_INVALID_ARGS,
+      'use an addr_test... address, or switch networks with --network');
+  }
+
+  try {
+    deserializeAddress(address);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new AdaError('invalid_args', `could not decode the address: ${message}`,
+      EXIT_INVALID_ARGS,
+      'a checksum failure usually means a truncated copy-paste — `ada address inspect` '
+      + 'reports what a good one contains');
+  }
+}
 
 export function noUtxosError(walletName: string): AdaError {
   return new AdaError(

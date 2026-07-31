@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { COMMANDS, GLOBAL_FLAGS, findCommand } from '../lib/reference.ts';
+import { COMMANDS, GLOBAL_FLAGS, SHARED_FLAGS, findCommand } from '../lib/reference.ts';
 import { TOOLS } from '../lib/mcp/tools.ts';
 import { commandNames, loaderFor } from '../lib/commands.ts';
 
@@ -100,10 +100,13 @@ describe('the reference is internally consistent', () => {
     }
   });
 
-  it('documents --yes on every command whose examples use it', () => {
-    // A flag shown in an example but absent from the global list would be a
-    // documentation dead end.
-    const globalFlagNames = new Set(GLOBAL_FLAGS.map((f) => f.flag.split(',')[0].split(' ')[0]));
+  it('documents every flag its examples use', () => {
+    // A flag shown in an example but absent from the lists a reader can reach
+    // would be a documentation dead end. SHARED_FLAGS counts: `help <command>`
+    // renders the ones that command accepts, alongside the global three.
+    const globalFlagNames = new Set(
+      [...GLOBAL_FLAGS, ...SHARED_FLAGS].map((f) => f.flag.split(',')[0].split(' ')[0]),
+    );
     for (const c of COMMANDS) {
       for (const e of c.examples ?? []) {
         for (const flag of e.match(/--[a-z-]+/g) ?? []) {

@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { parseArgs } from '../lib/argv.ts';
 import { validateFlags, acceptedFlags, nearest } from '../lib/flags.ts';
 import { commandNames } from '../lib/commands.ts';
-import { COMMANDS, GLOBAL_FLAGS } from '../lib/reference.ts';
+import { COMMANDS, GLOBAL_FLAGS, SHARED_FLAGS } from '../lib/reference.ts';
 import { AdaError } from '../lib/errors.ts';
 
 const check = (argv: string[]) => {
@@ -140,6 +140,7 @@ describe('the spec and the documentation', () => {
       const documented = new Set([
         ...(doc.flags ?? []).flatMap(nameOf),
         ...GLOBAL_FLAGS.flatMap(nameOf),
+        ...SHARED_FLAGS.flatMap(nameOf),
       ]);
 
       for (const flag of accepted) {
@@ -188,5 +189,43 @@ describe('flags that were accepted and did nothing', () => {
     // passing --quiet got the same output and an ok — the exact shape of
     // wrongness this module exists to remove, so it is not exempt from it.
     expect(() => check(['balance', flag])).toThrow(/unknown flag/);
+  });
+});
+
+describe('a flag called global has to be global', () => {
+  it('is accepted by every command', () => {
+    // `--network`, `--wallet` and `--yes` were listed as global and were not.
+    // `ada hash x --network preprod` and `ada airdrop 1000 --yes` were both
+    // rejected while the help said the flags applied everywhere — the docs
+    // promising more than the tool delivers is the same defect as a flag that
+    // is accepted and ignored, pointing the other way.
+    const broken: string[] = [];
+    for (const g of GLOBAL_FLAGS.flatMap(nameOf)) {
+      for (const doc of COMMANDS.filter((c) => c.implemented)) {
+        const accepted = acceptedFlags(doc.name);
+        if (accepted && !accepted.includes(g)) broken.push(`${doc.name} --${g}`);
+      }
+    }
+    expect(broken).toEqual([]);
+  });
+
+  it('keeps the merely-common ones out of the global list', () => {
+    const globals = GLOBAL_FLAGS.flatMap(nameOf);
+    for (const shared of SHARED_FLAGS.flatMap(nameOf)) {
+      expect(globals, `--${shared} is shared, not global`).not.toContain(shared);
+    }
+  });
+
+  it('shows a command only the shared flags it takes', () => {
+    // hash resolves neither a wallet nor a network, so neither belongs in its help.
+    const hash = acceptedFlags('hash') ?? [];
+    expect(hash).not.toContain('wallet');
+    expect(hash).not.toContain('network');
+    expect(hash).not.toContain('yes');
+
+    const transfer = acceptedFlags('transfer') ?? [];
+    expect(transfer).toContain('wallet');
+    expect(transfer).toContain('network');
+    expect(transfer).toContain('yes');
   });
 });

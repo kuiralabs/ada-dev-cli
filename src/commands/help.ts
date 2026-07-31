@@ -7,7 +7,8 @@ import { usageError } from '../lib/errors.ts';
 import { PKG_VERSION } from '../lib/pkg.ts';
 import { EXIT_INVALID_ARGS } from '../lib/exit-codes.ts';
 import { bold, dim } from '../ui/colors.ts';
-import { COMMANDS, GLOBAL_FLAGS, findCommand } from '../lib/reference.ts';
+import { COMMANDS, GLOBAL_FLAGS, SHARED_FLAGS, findCommand } from '../lib/reference.ts';
+import { acceptedFlags } from '../lib/flags.ts';
 
 export default async function help(args: Args): Promise<void> {
   const [topic] = args.positionals;
@@ -56,9 +57,18 @@ export default async function help(args: Args): Promise<void> {
       for (const f of doc.flags) out.push(`    ${f.flag.padEnd(width)}  ${dim(f.description)}`);
     }
 
-    out.push('', bold('  Global flags'));
-    const globalWidth = GLOBAL_FLAGS.reduce((max, f) => Math.max(max, f.flag.length), 0);
-    for (const f of GLOBAL_FLAGS) out.push(`    ${f.flag.padEnd(globalWidth)}  ${dim(f.description)}`);
+    // Only the shared flags this command actually takes, read from the same
+    // specification that rejects the ones it does not.
+    const accepted = acceptedFlags(doc.name) ?? [];
+    const shared = SHARED_FLAGS.filter((f) => {
+      const name = f.flag.replace(/^--/, '').split(/[ ,]/)[0];
+      return accepted.includes(name);
+    });
+
+    const common = [...shared, ...GLOBAL_FLAGS];
+    out.push('', bold('  Common flags'));
+    const commonWidth = common.reduce((max, f) => Math.max(max, f.flag.length), 0);
+    for (const f of common) out.push(`    ${f.flag.padEnd(commonWidth)}  ${dim(f.description)}`);
 
     if (doc.examples?.length) {
       out.push('', bold('  Examples'));
@@ -92,8 +102,11 @@ export default async function help(args: Args): Promise<void> {
   }
   out.push('');
   out.push(bold('Global flags'));
-  const flagWidth = GLOBAL_FLAGS.reduce((max, f) => Math.max(max, f.flag.length), 0);
+  const flagWidth = [...GLOBAL_FLAGS, ...SHARED_FLAGS].reduce((max, f) => Math.max(max, f.flag.length), 0);
   for (const f of GLOBAL_FLAGS) out.push(`  ${f.flag.padEnd(flagWidth)}  ${f.description}`);
+  out.push('');
+  out.push(bold('Common flags') + dim(' — on the commands that take them; see `ada help <command>`'));
+  for (const f of SHARED_FLAGS) out.push(`  ${f.flag.padEnd(flagWidth)}  ${f.description}`);
   out.push('');
 
   process.stdout.write(out.join('\n'));

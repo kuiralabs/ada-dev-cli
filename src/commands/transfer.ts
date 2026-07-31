@@ -16,7 +16,7 @@ import { writeJson } from '../lib/json-output.ts';
 import { usageError } from '../lib/errors.ts';
 import { openActive } from '../lib/active-wallet.ts';
 import {
-  noUtxosError, signAndSubmit, translateBuildFailure, assertMeetsMinValue,
+  noUtxosError, signAndSubmit, translateBuildFailure, assertMeetsMinValue, assertRecipient,
 } from '../lib/tx-common.ts';
 import { makeTxBuilder, meshNetworkName, withoutCostModelNoise } from '../lib/mesh.ts';
 import {
@@ -35,27 +35,14 @@ export default async function transfer(args: Args): Promise<void> {
       'example: ada transfer addr_test1... 10',
     );
   }
-  if (!to.startsWith('addr')) {
-    throw usageError(
-      `not a Cardano address: ${to}`,
-      'expected a bech32 address beginning with addr or addr_test',
-    );
-  }
 
   const amount = hasFlag(args, 'lovelace') ? parseLovelace(amountArg) : adaToLovelace(amountArg);
   if (amount <= 0n) throw usageError('amount must be greater than zero');
 
   const ctx = await openActive(args, flagValue(args, 'wallet'));
 
-  // Network discrimination as a real check, not a comment: a test address on
-  // mainnet, or the reverse, is a mistake worth catching before a fee is paid.
-  const wantsTestAddress = ctx.network.name !== 'mainnet';
-  if (wantsTestAddress && !to.startsWith('addr_test')) {
-    throw usageError(
-      `that is a mainnet address, but the active network is ${ctx.network.name}`,
-      'use an addr_test... address, or switch networks with --network',
-    );
-  }
+  // Shape, network and checksum, before a fee is paid for any of them.
+  assertRecipient(to, { network: ctx.network.name });
 
   const utxos = await ctx.wallet.getUtxos();
   if (utxos.length === 0) throw noUtxosError(ctx.stored.name);

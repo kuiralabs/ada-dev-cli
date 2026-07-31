@@ -16,8 +16,8 @@ import { usageError, AdaError } from '../lib/errors.ts';
 import { EXIT_CHAIN_REJECTED, EXIT_INTERNAL } from '../lib/exit-codes.ts';
 import { writeJson } from '../lib/json-output.ts';
 import { openActive, type ActiveContext } from '../lib/active-wallet.ts';
-import { makeTxBuilder, makeEvaluator, costModelsFor, withoutCostModelNoise, type Provider } from '../lib/mesh.ts';
-import { signAndSubmit, translateBuildFailure, translateHorizon, selectCollateral, requiredCollateral, assertMeetsMinValue } from '../lib/tx-common.ts';
+import { makeTxBuilder, makeEvaluator, costModelsFor, withoutCostModelNoise, assertBudgetCovers, rawEvaluate, declaredExUnits, type Provider } from '../lib/mesh.ts';
+import { signAndSubmit, translateBuildFailure, translateHorizon, selectCollateral, requiredCollateral, assertMeetsMinValue, assertRecipient } from '../lib/tx-common.ts';
 import { adaToLovelace, formatAda, parseSignedQuantity, LOVELACE_UNIT } from '../lib/amount.ts';
 import { resolveValidity, assertValidityShape, parseOutputRefs, parseSigners, type ValidityWindow } from '../lib/validity.ts';
 import { fetchTip } from '../lib/mesh.ts';
@@ -650,9 +650,7 @@ function readPayouts(args: Args): Payout[] {
         'for example --pay addr_test1...:12.5');
     }
     const address = spec.slice(0, at);
-    if (!address.startsWith('addr')) {
-      throw usageError(`--pay: not a Cardano address: ${address}`, 'expected a bech32 address');
-    }
+    assertRecipient(address, { what: '--pay: not a Cardano address' });
     return { address, lovelace: adaToLovelace(spec.slice(at + 1)) };
   });
 }
@@ -694,7 +692,7 @@ async function buildSpend(ctx: ActiveContext, spend: SpendContext): Promise<stri
 
     applyExtras(b, spend.extras);
 
-    return await withoutCostModelNoise(() => b
+    const unsigned = await withoutCostModelNoise(() => b
       // Validators commonly check for a signature; supplying it is harmless when
       // they do not, and the transaction is unprovable without it when they do.
       .requiredSignerHash(signerHash)
@@ -703,6 +701,12 @@ async function buildSpend(ctx: ActiveContext, spend: SpendContext): Promise<stri
       .changeAddress(ctx.payment)
       .selectUtxosFrom(spend.utxos)
       .complete());
+
+    // The builder declares the budget of a draft, not of what it finished
+    // building. Checked here, where the transaction is complete and the answer
+    // is still ours to give.
+    await withoutCostModelNoise(() => assertBudgetCovers(spend.evaluator, unsigned));
+    return unsigned;
   } catch (err) {
     throw translateScriptFailure(err, spend.identity.address);
   }
@@ -900,6 +904,11 @@ function scriptDetail(message: string): string | undefined {
 }
 
 function translateScriptFailure(err: unknown, scriptAddress: string): AdaError {
+  // Already ours, and already specific. Re-translating turned the
+  // under-declared-budget guard into "the validator is too expensive", which is
+  // a different problem with a different fix.
+  if (err instanceof AdaError) return err;
+
   const message = err instanceof Error ? err.message : String(err);
 
   const horizon = translateHorizon(message);
@@ -910,7 +919,8 @@ function translateScriptFailure(err: unknown, scriptAddress: string): AdaError {
       'the validator rejected this transaction',
       EXIT_CHAIN_REJECTED,
       'the datum, the redeemer, or a condition on the transaction itself did not satisfy it — '
-      + 'check the redeemer against `ada contract inspect`, and that you are signing with the key the datum names',
+      + 'check the redeemer against `ada contract inspect`, and that you are signing with the key the datum names. '
+      + '`ada contract simulate --verify-budget` asks a node what it makes of the same transaction',
       scriptDetail(message));
   }
   if (/exceeded|budget|ExUnits|max.*ex/i.test(message)) {
@@ -1054,13 +1064,16 @@ async function simulate(args: Args): Promise<void> {
   // number below an answer about unlock rather than about something adjacent.
   const unsigned = await buildSpend(ctx, spend);
 
-  // Ask the evaluator directly. The builder already used it to fill in the
-  // budget; this is the same question asked so the number can be reported.
-  const actions = await withoutCostModelNoise(() => evaluator.evaluateTx(unsigned, [], []));
-  const used = actions.reduce(
-    (acc, a) => ({ mem: acc.mem + Number(a.budget.mem), steps: acc.steps + Number(a.budget.steps) }),
-    { mem: 0, steps: 0 },
-  );
+  // What the scripts cost, and separately what the transaction declares.
+  //
+  // These are not the same number and reporting one as the other is misleading
+  // in both directions: the cost is what a node independently arrives at, while
+  // the declared figure carries the margin that covers the builder measuring a
+  // draft. Showing only the margined one made `--verify-budget` report a
+  // disagreement of exactly the margin between two evaluators that agreed
+  // exactly.
+  const { total: used, actions } = await withoutCostModelNoise(() => rawEvaluate(evaluator, unsigned));
+  const declared = await declaredExUnits(unsigned);
 
   // A second opinion, when one is reachable and asked for.
   //
@@ -1103,8 +1116,9 @@ async function simulate(args: Args): Promise<void> {
       network: ctx.network.name,
       scriptAddress: identity.address,
       spending: refOf(target),
-      redeemers: actions.map((a) => ({ tag: a.tag, index: a.index, mem: Number(a.budget.mem), steps: Number(a.budget.steps) })),
+      redeemers: actions,
       executionUnits: { mem: used.mem, steps: used.steps },
+      declaredExecutionUnits: { mem: declared.mem, steps: declared.steps },
       limits: { maxMem, maxSteps },
       usage: { memPercent: pct(used.mem, maxMem), stepsPercent: pct(used.steps, maxSteps) },
       scriptFeeLovelace: String(scriptFee),
@@ -1122,6 +1136,7 @@ async function simulate(args: Args): Promise<void> {
     ['spending', refOf(target)],
     ['memory', `${used.mem.toLocaleString()} / ${maxMem.toLocaleString()}  (${pct(used.mem, maxMem)}%)`],
     ['steps', `${used.steps.toLocaleString()} / ${maxSteps.toLocaleString()}  (${pct(used.steps, maxSteps)}%)`],
+    ['declared', `${declared.mem.toLocaleString()} mem, ${declared.steps.toLocaleString()} steps`],
     ['script fee', `${formatAda(BigInt(scriptFee))}`],
     ['tx size', `${sizeBytes} / ${protocol.maxTxSize} bytes`],
   ]) + '\n');
@@ -1131,7 +1146,20 @@ async function simulate(args: Args): Promise<void> {
       ? (verify.agrees ? 'the node agrees' : `the node says ${node.mem.toLocaleString()} / ${node.steps.toLocaleString()}`)
       : `unavailable — ${verify.reason ?? verify.error}`]]) + '\n');
   }
-  process.stdout.write('\n' + dim('  Nothing submitted. The validator ran and approved.') + '\n\n');
+  process.stdout.write('\n' + dim('  Nothing submitted. The validator ran and approved.') + '\n');
+
+  // Suggest the second opinion exactly once: when a node is answering and was
+  // not asked. Not on every simulate — a suggestion you cannot act on is noise,
+  // and one repeated after you have taken it is worse. Silent when Ogmios is
+  // absent, because the useful thing to say then is nothing at all.
+  if (!hasFlag(args, 'verify-budget')) {
+    const status = await probeOgmios(ctx.network);
+    if (status.reachable) {
+      process.stdout.write(dim('  A node is answering at ' + status.url
+        + ' — add --verify-budget to have it check these figures.') + '\n');
+    }
+  }
+  process.stdout.write('\n');
 }
 
 // ── publish ──────────────────────────────────────────────────────────

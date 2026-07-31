@@ -124,6 +124,13 @@ funds only when a token is issued alongside.
 command with no account and no API key, via the free community API. Set `ADA_BLOCKFROST_KEY` if you
 prefer Blockfrost or want higher rate limits.
 
+**Unknown flags are an error.** A flag a command does not implement stops it rather
+than being ignored, and the message names the closest one that exists. This
+catches the mistake worth catching — `--wallett alice` used to report the *active*
+wallet's balance and call it a success — but it means a script that passes flags
+defensively will now fail on the commands that take neither: `ada help <command>`
+lists exactly what each one accepts.
+
 Installing provides two binaries: `ada` and `ada-mcp`.
 
 ## How it works

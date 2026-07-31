@@ -14,6 +14,12 @@
 // It is not installed and not managed here. Running a second daemon is the
 // devkit's job, exactly as running a node is, and a tool that quietly requires
 // one has stopped being zero-config. Detection only.
+//
+// One thing worth knowing before reaching for it: Ogmios and cardano-node are
+// version-locked. Each Ogmios release states the single node version it speaks
+// to, and the newest release is usually ahead of whatever the devkit ships — so
+// "install the latest" produces a daemon that starts, reads the genesis, and
+// never connects. docs/DEVNET.md has the pairing.
 
 import { AdaError } from './errors.ts';
 import { EXIT_NETWORK } from './exit-codes.ts';
@@ -148,6 +154,8 @@ export function required(status: OgmiosStatus): never {
   throw new AdaError('ogmios_unavailable',
     `no Ogmios at ${status.url ?? '(unconfigured)'}: ${status.reason ?? 'unreachable'}`,
     EXIT_NETWORK,
-    'set ADA_OGMIOS_URL, or run one against your node — the devkit generates an ogmios.sh launcher, '
-    + 'though its native distribution does not install the binary');
+    'set ADA_OGMIOS_URL, or run one against your node. The devkit generates an ogmios.sh launcher '
+    + 'but does not install the binary, and the version matters: Ogmios speaks one node-to-client '
+    + 'protocol version, so it must match the node the devkit runs — the newest release generally '
+    + 'will not. See docs/DEVNET.md.');
 }

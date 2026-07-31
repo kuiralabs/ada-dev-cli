@@ -20,13 +20,31 @@ export interface CommandDoc {
   examples?: string[];
 }
 
+/**
+ * Accepted by every command, without exception.
+ *
+ * Kept to the three that genuinely are. `--network`, `--wallet` and `--yes` were
+ * listed here and are not: `ada hash x --network preprod` and `ada airdrop 1000
+ * --yes` were both rejected while this table called the flags global. A flag
+ * documented as universal has to be universal, or the documentation is the bug.
+ */
 export const GLOBAL_FLAGS: FlagDoc[] = [
   { flag: '--json', description: 'machine-readable output on stdout; one document, success or failure' },
-  { flag: '--network <name>', description: 'devnet, preprod or preview — overrides the configured default for this run' },
-  { flag: '--wallet <name>', description: 'act on a named wallet instead of the active one' },
-  { flag: '--yes', description: 'confirm an action that moves money, mints, or deletes a key' },
   { flag: '--version, -v', description: 'print the version' },
   { flag: '--help, -h', description: 'usage for a command' },
+];
+
+/**
+ * Flags shared by several commands but not by all.
+ *
+ * `help <command>` shows only the ones that command actually takes, which it can
+ * decide from the same specification that validates them — so the two cannot
+ * disagree about whether a flag exists.
+ */
+export const SHARED_FLAGS: FlagDoc[] = [
+  { flag: '--network <name>', description: 'devnet, preprod or preview — overrides the configured default for this run' },
+  { flag: '--wallet <name>', description: 'act on a named wallet instead of the active one' },
+  { flag: '--yes', description: 'build *and submit*; without it the command stops at a dry run' },
 ];
 
 export const COMMANDS: CommandDoc[] = [

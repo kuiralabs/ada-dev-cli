@@ -133,6 +133,62 @@ they make otherwise-awkward tests deterministic:
 
 None of these are surfaced by `ada` yet. When a test needs one, the flag exists.
 
+## Ogmios: optional, and version-locked to the node
+
+Ogmios is a bridge to the running node, and it answers one question nothing else
+here can: **what does the node itself think this script costs?** Our own answer
+comes from a Plutus VM reimplemented in JavaScript; the node's comes from the
+implementation that will actually judge the transaction. `ada contract simulate
+--verify-budget` compares the two, and a disagreement is worth knowing about.
+
+Nothing requires it. The devkit generates a launcher at
+`~/.yaci-cli/local-clusters/default/ogmios.sh` but **does not download the
+binary**, so out of the box the launcher points at a file that is not there.
+
+**The version is not a detail.** Ogmios speaks exactly one node-to-client
+protocol version, and each release names the single `cardano-node` version it
+pairs with. The newest release is normally ahead of whatever the devkit ships.
+Get that wrong and the failure is quiet in the worst way: Ogmios starts, reads
+the genesis, reports the right network magic, and then logs
+`HealthFailedToConnect` forever while `/health` says `disconnected`.
+
+So check what the devkit is running first:
+
+```sh
+~/.yaci-cli/cardano-node/bin/cardano-node --version
+```
+
+Then find the Ogmios release whose notes name that version — the release body
+states it as ``cardano-node == <version>`` — and unpack it where the generated
+launcher already expects it:
+
+```sh
+# node 10.1.4 pairs with Ogmios v6.11.0; confirm the pairing for your node
+mkdir -p ~/.yaci-cli/components/ogmios/bin
+unzip -j ogmios-v6.11.0-aarch64-macos.zip 'bin/ogmios' \
+  -d ~/.yaci-cli/components/ogmios/bin
+chmod +x ~/.yaci-cli/components/ogmios/bin/ogmios
+xattr -d com.apple.quarantine ~/.yaci-cli/components/ogmios/bin/ogmios   # macOS
+```
+
+Start it from the cluster directory, because the launcher uses paths relative to
+it:
+
+```sh
+cd ~/.yaci-cli/local-clusters/default && ./ogmios.sh
+```
+
+It is connected when `/health` says so — not merely when the process is up:
+
+```sh
+curl -s localhost:1337/health | grep -o '"connectionStatus":"[a-z]*"'
+```
+
+`ada status` reports it either way, and every command works without it. If you
+see `connectionStatus: disconnected` with the node plainly running, the version
+pairing is the first thing to check, and a dead node socket is the second: a
+socket **file** existing is not the same as something listening on it.
+
 ## Ports are fixed for now
 
 The service ports above are the devkit defaults. The devkit can be told to use others; **this tool

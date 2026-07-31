@@ -17,7 +17,7 @@ import { writeJson } from '../lib/json-output.ts';
 import { usageError, AdaError } from '../lib/errors.ts';
 import { EXIT_CHAIN_REJECTED } from '../lib/exit-codes.ts';
 import { openActive } from '../lib/active-wallet.ts';
-import { noUtxosError, signAndSubmit, translateBuildFailure } from '../lib/tx-common.ts';
+import { noUtxosError, signAndSubmit, translateBuildFailure, assertRecipient } from '../lib/tx-common.ts';
 import { makeTxBuilder, meshNetworkName, withoutCostModelNoise } from '../lib/mesh.ts';
 import { lovelaceToAda, formatAda, sumLovelace, LOVELACE_UNIT } from '../lib/amount.ts';
 import { fields, heading, ok, warn, emphasis } from '../ui/format.ts';
@@ -166,15 +166,15 @@ async function send(args: Args): Promise<void> {
       'example: ada asset send addr_test1... <unit>:100 <otherUnit>:5',
     );
   }
-  if (!to.startsWith('addr')) {
-    throw usageError(`not a Cardano address: ${to}`, 'expected a bech32 address');
-  }
+
 
   // A bundle, not a single asset: many distinct tokens travel in one output, which
   // is what the ledger natively supports.
   const bundle = pairs.map(parseAssetPair);
 
   const ctx = await openActive(args, flagValue(args, 'wallet'));
+  assertRecipient(to, { network: ctx.network.name });
+
   const utxos = await ctx.wallet.getUtxos();
   if (utxos.length === 0) throw noUtxosError(ctx.stored.name);
 

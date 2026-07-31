@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  assertMeetsMinValue, noUtxosError, translateBuildFailure,
+  assertMeetsMinValue, noUtxosError, translateBuildFailure, assertRecipient,
 } from '../lib/tx-common.ts';
 import { AdaError } from '../lib/errors.ts';
 import { LOVELACE_UNIT } from '../lib/amount.ts';
@@ -105,5 +105,54 @@ describe('noUtxosError', () => {
     expect(e.code).toBe('no_utxos');
     expect(e.message).toMatch(/alice/);
     expect(e.hint).toMatch(/ada airdrop/);
+  });
+});
+
+describe('checking a recipient before sending value to it', () => {
+  const GOOD = 'addr_test1qpf8cud6excflj787pgkfe0vlkpj5x7tz2fgsdtak69033dmha29vf5ajuhcslaaru44844juzssnkds30r300zwee4qkdrx2v';
+
+  it('accepts a real address', () => {
+    expect(() => assertRecipient(GOOD, { network: 'devnet' })).not.toThrow();
+  });
+
+  it('rejects a truncated paste as bad input, not as our fault', () => {
+    // Every command that took a recipient checked the `addr` prefix and no
+    // more, so this reached the transaction builder and came back as
+    // `internal_error` — the tool blaming itself for a typo.
+    try {
+      assertRecipient('addr_test1qpf8cud6exc', { network: 'devnet' });
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect((err as AdaError).code).toBe('invalid_args');
+      expect((err as AdaError).hint).toMatch(/truncated copy-paste/);
+    }
+  });
+
+  it('rejects a corrupted checksum', () => {
+    // One character changed from GOOD: decodes structurally, fails the checksum.
+    expect(() => assertRecipient(`${GOOD.slice(0, -1)}w`, { network: 'devnet' }))
+      .toThrow(/could not decode/);
+  });
+
+  it('rejects something that is not an address at all', () => {
+    expect(() => assertRecipient('hello', { network: 'devnet' })).toThrow(/not a Cardano address/);
+    expect(() => assertRecipient('', { network: 'devnet' })).toThrow(/not a Cardano address/);
+  });
+
+  it('names the network mistake before the checksum one', () => {
+    // A mainnet address decodes perfectly, so a checksum-first order would pass
+    // its own check and leave the real mistake unmentioned.
+    expect(() => assertRecipient('addr1qxck4gg9x8xtvp9lsjmg8k5c8m2tqjy0kg8xqfnj7v0wl0', { network: 'preprod' }))
+      .toThrow(/mainnet address/);
+  });
+
+  it('still checks the checksum when no network is supplied', () => {
+    // Callers that validate before resolving a network still get the decode.
+    expect(() => assertRecipient('addr_test1qpf8cud6exc')).toThrow(/could not decode/);
+  });
+
+  it("uses the caller's own words for what was expected", () => {
+    expect(() => assertRecipient('nonsense', { what: 'not a counterparty address' }))
+      .toThrow(/not a counterparty address/);
   });
 });

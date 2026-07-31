@@ -86,6 +86,10 @@ export default async function status(args: Args): Promise<void> {
         ? `STALLED — height ${tip?.height ?? '?'}, last block ${Math.round((tipAgeMs ?? 0) / 1000)}s ago`
         : `advancing, height ${tip?.height ?? '?'}`],
     ...(network.isLocal ? [['devnet', processAlive ? `running (pid ${pid})` : 'not running'] as [string, string]] : []),
+    // Only when something is actually answering. Ogmios is optional, and a line
+    // saying so on every status would be noise for the people who never want it
+    // — but when it is there, --verify-budget works and that is worth knowing.
+    ...(ogmios.reachable ? [['ogmios', `answering at ${ogmios.url}`] as [string, string]] : []),
     ['wallet', activeWallet ?? 'none selected'],
     ['wallets', String(wallets.length)],
   ]) + '\n');

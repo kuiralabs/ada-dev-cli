@@ -25,7 +25,7 @@ import { usageError, AdaError } from '../lib/errors.ts';
 import { EXIT_CHAIN_REJECTED } from '../lib/exit-codes.ts';
 import { openActive } from '../lib/active-wallet.ts';
 import { makeTxBuilder, meshNetworkName, withoutCostModelNoise } from '../lib/mesh.ts';
-import { noUtxosError, translateBuildFailure, assertMeetsMinValue, withMinValue } from '../lib/tx-common.ts';
+import { noUtxosError, translateBuildFailure, assertMeetsMinValue, withMinValue, assertRecipient } from '../lib/tx-common.ts';
 import { adaToLovelace, lovelaceToAda, formatAda, LOVELACE_UNIT } from '../lib/amount.ts';
 import {
   encodeOffer, decodeOffer, isExpired, OFFER_VERSION,
@@ -73,13 +73,14 @@ async function build(args: Args): Promise<void> {
       'example: ada swap build --with addr_test1... --give 10ADA --want <policy><hex>:5',
     );
   }
-  if (!counterparty.startsWith('addr')) {
-    throw usageError(`not a Cardano address: ${counterparty}`);
-  }
+  // Shape and checksum before any network call; the network tag needs the
+  // resolved context, so it is checked as soon as there is one.
+  assertRecipient(counterparty, { what: 'not a counterparty address' });
 
   const gives = parseAssetSpec(giveSpec);
   const wants = parseAssetSpec(wantSpec);
   const ctx = await openActive(args, flagValue(args, 'wallet'));
+  assertRecipient(counterparty, { network: ctx.network.name, what: 'not a counterparty address' });
 
   const myUtxos = await ctx.wallet.getUtxos();
   if (myUtxos.length === 0) throw noUtxosError(ctx.stored.name);
