@@ -232,6 +232,7 @@ async function lock(args: Args): Promise<void> {
   const params = await ctx.provider.fetchProtocolParameters();
   assertMeetsMinValue(output.address, output.amount, params.coinsPerUtxoSize);
 
+  const validity = await scriptlessValidity(args, ctx);
   const utxos = await ctx.wallet.getUtxos();
 
   // Inline (CIP-32) by default: the datum travels on the output, so anyone can
@@ -247,6 +248,7 @@ async function lock(args: Args): Promise<void> {
     const b = builder.txOut(output.address, output.amount);
     if (asHash) b.txOutDatumHashValue(datum.value as never);
     else b.txOutInlineDatumValue(datum.value as never);
+    applyExtras(b, { readOnly: [], signers: [], validity });
 
     unsigned = await withoutCostModelNoise(() => b
       .changeAddress(ctx.payment)
@@ -268,6 +270,7 @@ async function lock(args: Args): Promise<void> {
       scriptAddress: identity.address, scriptHash: identity.hash,
       ada: formatAda(lovelace), lovelace: lovelace.toString(),
       datum: datum.describe, datumEncoding: asHash ? 'hash' : 'inline',
+      ...(describeWindow(validity) ? { validity: describeWindow(validity) } : {}),
       submitted, ...(txHash ? { txHash } : {}),
     });
     return;
@@ -414,6 +417,36 @@ async function anchorValidity(flags: ExtraFlags, ctx: ActiveContext): Promise<Tx
   };
 }
 
+/**
+ * The validity window alone, for transactions that run no script.
+ *
+ * A window bounds *any* transaction, so `lock` and `publish` accept it. Reference
+ * inputs and extra signers only mean something to a validator, so passing them
+ * where none runs is a mistake worth naming rather than ignoring — silently
+ * dropping a flag someone typed is how a security assumption goes missing.
+ */
+async function scriptlessValidity(args: Args, ctx: ActiveContext): Promise<ValidityWindow> {
+  for (const [flag, why] of [
+    ['read-only', 'reference inputs are read by a validator, and none runs here'],
+    ['signer', 'extra signers are checked by a validator, and none runs here'],
+  ] as const) {
+    if (flagValue(args, flag) !== undefined) {
+      throw usageError(`--${flag} has no effect on this command`, why);
+    }
+  }
+  const flags = readExtraFlags(args);
+  return (await anchorValidity(flags, ctx)).validity;
+}
+
+/** How a window reads in output. Slots are meaningless without saying so. */
+const describeWindow = (w: ValidityWindow): Record<string, number> | undefined =>
+  w.invalidBefore === undefined && w.invalidHereafter === undefined
+    ? undefined
+    : {
+      ...(w.invalidBefore !== undefined ? { fromSlot: w.invalidBefore } : {}),
+      ...(w.invalidHereafter !== undefined ? { untilSlot: w.invalidHereafter } : {}),
+    };
+
 /** Apply the extras to a builder. One definition, so every command agrees. */
 function applyExtras(b: MeshTxBuilder, extras: TxExtras): MeshTxBuilder {
   for (const r of extras.readOnly) b.readOnlyTxInReference(r.txHash, r.index);
@@ -527,6 +560,11 @@ async function unlock(args: Args): Promise<void> {
       ada: formatAda(BigInt(recovered)), lovelace: recovered,
       redeemer: redeemer.describe,
       datumEncoding: datumMode.inline ? 'inline' : 'hash',
+      // The window was resolved against the chain tip, so the caller does not
+      // otherwise know which slots "30m" became.
+      ...(describeWindow(spend.extras.validity) ? { validity: describeWindow(spend.extras.validity) } : {}),
+      ...(spend.extras.readOnly.length ? { readOnly: spend.extras.readOnly.map((r) => `${r.txHash}#${r.index}`) } : {}),
+      ...(spend.extras.signers.length ? { requiredSigners: spend.extras.signers } : {}),
       collateral: refOf(collateral),
       submitted, ...(txHash ? { txHash } : {}),
     });
@@ -815,6 +853,7 @@ async function simulate(args: Args): Promise<void> {
       scriptFeeLovelace: String(scriptFee),
       txSizeBytes: sizeBytes,
       maxTxSize: protocol.maxTxSize,
+      ...(describeWindow(spend.extras.validity) ? { validity: describeWindow(spend.extras.validity) } : {}),
       withinLimits: used.mem <= maxMem && used.steps <= maxSteps && sizeBytes <= protocol.maxTxSize,
     });
     return;
@@ -857,6 +896,7 @@ async function publish(args: Args): Promise<void> {
   const toSelf = hasFlag(args, 'to-self');
   const holder = toSelf ? ctx.payment : identity.address;
 
+  const validity = await scriptlessValidity(args, ctx);
   const protocol = await ctx.provider.fetchProtocolParameters();
   const utxos = await ctx.wallet.getUtxos();
 
@@ -865,6 +905,7 @@ async function publish(args: Args): Promise<void> {
     const b = makeTxBuilder(ctx.provider)
       .txOut(holder, [])
       .txOutReferenceScript(code, identity.version);
+    applyExtras(b, { readOnly: [], signers: [], validity });
     // A reference output still needs its minimum ADA, and the script bytes make
     // it large — this is the one case where that minimum is a real number rather
     // than a formality.
@@ -891,6 +932,7 @@ async function publish(args: Args): Promise<void> {
       scriptSizeBytes: scriptBytesLength,
       referenceAddress: holder,
       recoverable: toSelf,
+      ...(describeWindow(validity) ? { validity: describeWindow(validity) } : {}),
       submitted, ...(txHash ? { txHash, referenceInput: `${txHash}#0` } : {}),
     });
     return;
@@ -950,6 +992,7 @@ async function mint(args: Args): Promise<void> {
 
   const redeemer = await buildRedeemer(args, loaded, validator);
   const extraFlags = readExtraFlags(args);
+  const mintExtras = await anchorValidity(extraFlags, ctx);
   const { stringToHex } = await mesh();
   const assetName = stringToHex(name);
   // For a minting validator the script hash IS the policy id — the namespace
@@ -982,7 +1025,7 @@ async function mint(args: Args): Promise<void> {
       .mintingScript(code)
       .mintRedeemerValue(redeemer.value as never);
 
-    applyExtras(b, await anchorValidity(extraFlags, ctx));
+    applyExtras(b, mintExtras);
 
     unsigned = await withoutCostModelNoise(() => b
       .txInCollateral(collateral.input.txHash, collateral.input.outputIndex,
@@ -1006,6 +1049,7 @@ async function mint(args: Args): Promise<void> {
       policyId, unit,
       redeemer: redeemer.describe,
       ...(seedRef ? { spent: seedRef } : {}),
+      ...(describeWindow(mintExtras.validity) ? { validity: describeWindow(mintExtras.validity) } : {}),
       submitted, ...(txHash ? { txHash } : {}),
     });
     return;

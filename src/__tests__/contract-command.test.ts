@@ -315,3 +315,26 @@ describe('quantities carry an operation in their sign', () => {
     expect(parseSignedQuantity(' 1_000 ')).toBe(1000n);
   });
 });
+
+describe('flags that cannot work are named, never ignored', () => {
+  const bp = 'src/__tests__/fixtures';
+  const KEY = 'b'.repeat(56);
+  const REF = `${'a'.repeat(64)}#0`;
+
+  it('refuses --signer where no validator runs', async () => {
+    // Silently dropping a flag someone typed is how a security assumption goes
+    // missing: they believe a second signature is required and it is not.
+    await expect(run(['lock', '--amount', '5', '--datum-signer', '--signer', KEY, '--blueprint', bp]))
+      .rejects.toThrow(/--signer has no effect/);
+  });
+
+  it('refuses --read-only where no validator runs', async () => {
+    await expect(run(['publish', '--read-only', REF, '--blueprint', bp]))
+      .rejects.toThrow(/--read-only has no effect/);
+  });
+
+  it('says why, not just that', async () => {
+    await run(['lock', '--amount', '5', '--datum-signer', '--signer', KEY, '--blueprint', bp])
+      .catch((e: AdaError) => expect(e.hint).toMatch(/checked by a validator/));
+  });
+});
