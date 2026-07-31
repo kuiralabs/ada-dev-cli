@@ -528,10 +528,10 @@ async function delegate(args: Args, subcommand: 'build' | 'check'): Promise<void
   const dir = flagValue(args, 'path') ?? process.cwd();
   const extra = args.positionals.slice(1);
 
-  // Aiken renders a diagnostic only to a terminal and a JSON report only to a
-  // pipe, so which we ask for depends on who is asking. See runAiken.
+  // Both halves of aiken's output are collected — the JSON report, and the
+  // diagnostic it renders only to a terminal. See runAiken.
   const wantsJson = hasFlag(args, 'json');
-  const { report, version } = runAiken([subcommand, ...extra], dir, { json: wantsJson });
+  const { report, version } = runAiken([subcommand, ...extra], dir);
   const tests = report?.summary;
 
   if (wantsJson) {

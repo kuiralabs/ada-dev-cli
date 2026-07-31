@@ -7,7 +7,7 @@
 // report. These pin the arrangement that gives each audience the right one.
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runAiken, resolveAikenBin, notInstalled, parseSummary } from '../lib/aiken.ts';
@@ -68,18 +68,30 @@ describe('a failing compile', () => {
     }
   });
 
-  it('tells a --json caller where the diagnostic went', async () => {
-    // In JSON mode stdout is captured, which is exactly what makes aiken
-    // suppress the diagnostic. Saying so beats leaving an agent with an
-    // unexplained failure.
-    useFake('exit 1');
+  it('re-runs to render the diagnostic when no report explains the failure', () => {
+    // A type error produces no JSON, so the first captured run yields nothing to
+    // report. The second run exists solely to make aiken print the diagnostic,
+    // and it is what keeps a compile error from being swallowed.
+    const marker = join(mkdtempSync(join(tmpdir(), 'marker-')), 'runs');
+    useFake(`echo x >> ${marker}; exit 1`);
+    const project = mkdtempSync(join(tmpdir(), 'proj-'));
+    expect(() => runAiken(['check'], project)).toThrow(AdaError);
+    expect(readFileSync(marker, 'utf8').trim().split('\n')).toHaveLength(2);
+  });
+
+  it('does not re-run when the report already explains the failure', () => {
+    // A failing test is fully described by the JSON. Compiling twice for that
+    // would be waste, and the second run could disagree with the first.
+    const marker = join(mkdtempSync(join(tmpdir(), 'marker-')), 'runs');
+    useFake(`echo x >> ${marker}; echo '{"summary":{"total":2,"passed":1,"failed":1}}'; exit 1`);
     const project = mkdtempSync(join(tmpdir(), 'proj-'));
     try {
-      runAiken(['check'], project, { json: true });
+      runAiken(['check'], project);
       expect.unreachable();
     } catch (e) {
-      expect((e as AdaError).hint).toMatch(/without --json/);
+      expect((e as AdaError).hint).toBe('1 of 2 tests failed');
     }
+    expect(readFileSync(marker, 'utf8').trim().split('\n')).toHaveLength(1);
   });
 });
 
@@ -87,7 +99,7 @@ describe('reading the machine-readable report', () => {
   it('parses the JSON aiken check writes to stdout', () => {
     useFake(`echo '{"seed":1,"summary":{"total":3,"passed":2,"failed":1}}'`);
     const project = mkdtempSync(join(tmpdir(), 'proj-'));
-    const r = runAiken(['check'], project, { json: true });
+    const r = runAiken(['check'], project);
     expect(r.report?.summary).toEqual({ total: 3, passed: 2, failed: 1 });
   });
 
@@ -95,20 +107,21 @@ describe('reading the machine-readable report', () => {
     // `aiken build` writes no JSON at all. A missing report is normal, not an error.
     useFake('echo "not json"');
     const project = mkdtempSync(join(tmpdir(), 'proj-'));
-    expect(runAiken(['build'], project, { json: true }).report).toBeUndefined();
+    expect(runAiken(['build'], project).report).toBeUndefined();
   });
 
   it('survives truncated JSON rather than throwing', () => {
     useFake(`echo '{"summary":'`);
     const project = mkdtempSync(join(tmpdir(), 'proj-'));
-    expect(runAiken(['check'], project, { json: true }).report).toBeUndefined();
+    expect(runAiken(['check'], project).report).toBeUndefined();
   });
 
-  it('reports no captured report when stdout was inherited', () => {
-    // Not a bug: inheriting is what lets the diagnostic through.
+  it('captures the report on success regardless of audience', () => {
+    // stdout is always captured now; the diagnostic is recovered separately, so
+    // there is no arrangement in which the report is sacrificed.
     useFake(`echo '{"summary":{"total":1,"passed":1,"failed":0}}'`);
     const project = mkdtempSync(join(tmpdir(), 'proj-'));
-    expect(runAiken(['check'], project).report).toBeUndefined();
+    expect(runAiken(['check'], project).report?.summary?.passed).toBe(1);
   });
 });
 

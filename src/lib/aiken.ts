@@ -78,24 +78,27 @@ export function aikenVersion(): string | undefined {
 /**
  * Run an aiken subcommand in a project directory.
  *
- * **How the streams are wired depends on who is asking**, because Aiken decides
- * what to emit by looking at whether *stdout* is a terminal, and the two answers
- * are mutually exclusive:
+ * Aiken chooses its output by asking whether **stdout** is a terminal, and the
+ * two answers carry different information:
  *
- * - **terminal** → a rich diagnostic: the file, the line, the offending
- *   expression underlined, a "did you forget to import it?" hint
- * - **pipe** → a JSON report, and the diagnostic is discarded entirely. A
- *   compile error arrives as exit status 1 with four lines of progress and
- *   nothing else
+ * - **pipe** → a JSON report: per-test titles, pass/fail, execution units. Rich,
+ *   and exactly what a program wants. But a *type error* produces no JSON at all
+ *   — stdout is empty and the diagnostic is simply never rendered.
+ * - **terminal** → the diagnostic: the file, the line, the offending expression
+ *   underlined, a "did you forget to import it?" hint. No JSON.
  *
- * So capturing stdout unconditionally would throw away the very thing that
- * justifies delegating to Aiken at all, while inheriting it unconditionally
- * would break the `--json` contract and lose the machine-readable report.
+ * So neither arrangement alone is sufficient, and losing either one is a real
+ * loss. We take both, in two steps:
  *
- * Matching the arrangement to the audience gives each what it needs: a human
- * gets the diagnostic printed straight to their terminal, and an agent gets
- * structured output it can branch on. stderr is inherited either way — it
- * carries progress, and it is never part of this tool's contract.
+ * 1. Run with stdout captured, which yields the JSON report whenever there is one.
+ * 2. If that failed and produced no report — the compile-error case — run again
+ *    with **our stderr handed to aiken as its stdout**. Aiken sees a terminal and
+ *    renders the full diagnostic, and it lands on stderr, which is where this
+ *    tool's human output already goes and is never part of the `--json` contract.
+ *
+ * The second run costs ~0.16s because the build is already warm, and it happens
+ * only on the path where something is broken and about to be fixed. Nothing is
+ * hidden from either audience.
  */
 export function runAiken(args: string[], cwd: string, opts: { json?: boolean } = {}): AikenResult {
   const bin = resolveAikenBin();
@@ -106,7 +109,7 @@ export function runAiken(args: string[], cwd: string, opts: { json?: boolean } =
     cwd,
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
-    stdio: ['ignore', opts.json ? 'pipe' : 'inherit', 'inherit'],
+    stdio: ['ignore', 'pipe', 'inherit'],
   });
 
   if (r.error) {
@@ -119,17 +122,39 @@ export function runAiken(args: string[], cwd: string, opts: { json?: boolean } =
   const report = parseReport(r.stdout ?? '');
 
   if (r.status !== 0) {
-    // The diagnostic has already been printed to the user's terminal by aiken
-    // itself, in colour and with the offending source line underlined. Repeating
-    // a worse version of it here would only add noise.
+    // No report means the failure happened before any test ran — a type error,
+    // whose diagnostic aiken renders only to a terminal. Ask for it again, with
+    // our stderr standing in as its stdout so the diagnostic reaches the user
+    // without ever touching the JSON channel.
+    if (!report) renderDiagnostic(bin, args, cwd);
+
     throw new AdaError('aiken_failed',
       `aiken ${args[0]} failed`, EXIT_CHAIN_REJECTED,
-      opts.json
-        ? 'run the same command without --json to see the compiler diagnostic, which aiken renders only to a terminal'
+      report
+        ? `${report.summary?.failed ?? 0} of ${report.summary?.total ?? 0} tests failed`
         : 'the compiler printed the diagnostic above');
   }
 
   return { output, report, version };
+}
+
+/**
+ * Re-run purely to make aiken render its diagnostic.
+ *
+ * Handing it fd 2 as its stdout is the whole trick: aiken's terminal check looks
+ * at whatever it was given, so it produces the full styled diagnostic, and every
+ * byte lands on stderr rather than stdout. A `--json` caller keeps a clean,
+ * parseable stdout and the person reading the terminal still sees the error.
+ *
+ * Best-effort by design — if this second run fails for any reason, the original
+ * failure is still reported. It exists to add information, never to withhold it.
+ */
+function renderDiagnostic(bin: string, args: string[], cwd: string): void {
+  try {
+    spawnSync(bin, args, { cwd, stdio: ['ignore', 2, 'inherit'] });
+  } catch {
+    // The caller throws with the original failure regardless.
+  }
 }
 
 function parseReport(stdout: string): AikenReport | undefined {

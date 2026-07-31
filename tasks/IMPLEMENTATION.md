@@ -6,7 +6,7 @@ worse than none, because it gets trusted.
 Legend: `[x]` done and exercised against a real chain · `[ ]` not built · `[—]` deliberately not
 building it, reason given · `[!]` blocked by something outside this repo.
 
-**Now:** 17 commands · 29 MCP tools · 269 offline tests · stages 1–6 closed · stage 7 spine done
+**Now:** 17 commands · 29 MCP tools · 270 offline tests · stages 1–6 closed · stage 7 spine done
 (`inspect`, `address`, `lock`, `unlock`, verified on devnet) · publish held.
 
 ---
@@ -82,7 +82,7 @@ address is derived from its hash and exists the moment it compiles; state lives 
 that address, not in the script; and a call is a *spend* of one of those UTxOs. Copying the four
 Midnight verbs would name operations this chain does not have.
 
-- [x] **`contract build` / `contract check`** — delegated to `aiken`. It renders diagnostics only to a terminal and its JSON report only to a pipe, so the stream arrangement follows the audience: a human gets the underlined source line, an agent gets counts to branch on. `ADA_AIKEN_BIN` pins a version, since the compiler decides the script hash
+- [x] **`contract build` / `contract check`** — delegated to `aiken`, losing nothing. It emits a JSON report only to a pipe and diagnostics only to a terminal, so both are taken: the report is captured, and a failure with no report re-runs with our stderr standing in as aiken's stdout — the full diagnostic renders and lands outside the JSON channel. The second run costs 0.16s and only happens when something is already broken. `ADA_AIKEN_BIN` pins a version, since the compiler decides the script hash
 - [x] **`contract inspect`** — validators, purposes, datum and redeemer schemas, hash, and any unapplied parameters. The blueprint is to this what `contract-info.json` is to Compact
 - [x] **`contract address`** — derived from the blueprint hash, network-discriminated. Cross-checked byte-for-byte against `aiken blueprint address`. Refuses to answer for a validator with unapplied parameters and say which are missing: applying parameters changes the code, so it changes the hash, so it changes the address
 - [x] **`contract lock`** — pay to a script address with a datum
