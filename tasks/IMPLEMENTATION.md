@@ -49,9 +49,9 @@ building it, reason given · `[!]` blocked by something outside this repo.
 - [x] **`manual`** — full reference, sharing its data with `help` so the two cannot drift
 - [x] **Preprod verified** — reads work with no account and no API key, via a free community API
 - [—] **`cache clear`** — nothing is cached. `~/.ada` holds config, keys, logs and a pid file
-- [!] **`localnet snapshot/rollback`** — fork and snapshot exist only in the devkit's interactive shell, and invoking it again kills the running devnet
-- [!] **`localnet addresses`** — the devkit prints its twenty pre-funded addresses to a log; `cluster-info.json` carries ports but not addresses. Log-scraping was rejected as too fragile
-- [!] **`address derive`** — delegated to the official `cardano-address` binary, which is not installed. Derivation is the highest-consequence step in the stack and a second implementation could only disagree with the authoritative one
+- [!] **`localnet snapshot/rollback`** — the devkit's `RollbackController` exposes `take-db-snapshot`, `rollback-to-db-snapshot` and a block-level `rollback` at `/local-cluster/api/devnet/rollback/…`, but they 404 on the version installed here. Blocked by our devkit build rather than by design — an upgrade would unblock it
+- [x] **`localnet addresses`** — not blocked after all. Log-scraping was rightly rejected, but the same information sits in the Shelley genesis as `initialFunds`, which the control API serves and which the node was started from. 24 addresses, richest first, bech32-encoded from the raw form the ledger stores
+- [x] **`address derive`** — delegated to `cardano-address`, now installed (the arm64 4.0.7 release). Never reimplemented: derivation does not fail loudly when wrong, it succeeds at the wrong address. That also makes every call a cross-check — it **refuses** to report an address the reference and our wallet disagree about. Verified byte-for-byte on both the payment and stake addresses
 
 ## 5 — Native assets
 
@@ -141,7 +141,7 @@ them missing:
 
 - [x] **`generate`** — deprecated upstream in favour of `wallet generate`, which is what we built
 - [x] **`inspect-cost`** — split in two here: `params` carries the standing limits, including the execution-unit budget and its prices, and `contract simulate` will report what one transaction actually spends against them
-- [!] **`genesis-address`** — this is `localnet addresses`, blocked above for the same reason: the devkit prints its pre-funded addresses to a log and exposes them nowhere machine-readable
+- [x] **`genesis-address`** — this is `localnet addresses`, now implemented
 
 ## Standing rules
 

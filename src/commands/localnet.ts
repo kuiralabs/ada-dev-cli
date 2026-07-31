@@ -7,6 +7,7 @@ import { flagValue, hasFlag } from '../lib/argv.ts';
 import { loadConfig, resolveNetwork } from '../lib/cli-config.ts';
 import { usageError } from '../lib/errors.ts';
 import { writeJson, writeJsonError } from '../lib/json-output.ts';
+import { fundedAddresses, type FundedAddress } from '../lib/genesis.ts';
 import { isReachable } from '../lib/http.ts';
 import { ENDPOINTS, DEVKIT_ENDPOINTS, DEVNET_READY_TIMEOUT_MS } from '../lib/constants.ts';
 import { EXIT_NOT_RUNNING } from '../lib/exit-codes.ts';
@@ -20,8 +21,9 @@ import {
   stopDevnetAndVerify, devnetPortsInUse,
 } from '../lib/yaci.ts';
 import { fields, heading, ok, warn, emphasis } from '../ui/format.ts';
+import { dim } from '../ui/colors.ts';
 
-const SUBCOMMANDS = ['up', 'down', 'stop', 'status', 'logs', 'bootstrap', 'reset'] as const;
+const SUBCOMMANDS = ['up', 'down', 'stop', 'status', 'logs', 'bootstrap', 'reset', 'addresses'] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number];
 
 export default async function localnet(args: Args): Promise<void> {
@@ -41,6 +43,7 @@ export default async function localnet(args: Args): Promise<void> {
     case 'logs': return logs(args);
     case 'bootstrap': return bootstrap(args);
     case 'reset': return reset(args);
+    case 'addresses': return addresses(args);
   }
 }
 
@@ -339,4 +342,46 @@ async function logs(args: Args): Promise<void> {
   // The path rather than the contents: tailing is what `tail -f` is for, and
   // streaming a log through this process would break the output contract.
   process.stdout.write(`${path}\n`);
+}
+
+// ── addresses ────────────────────────────────────────────────────────
+//
+// The twenty-odd accounts the devnet starts with money in. Previously rejected
+// as unimplementable because the devkit only prints them to a log — but they are
+// also in the Shelley genesis, which the control API serves and which the node
+// was actually started from.
+
+async function addresses(args: Args): Promise<void> {
+  const network = resolveNetwork(loadConfig(), flagValue(args, 'network'));
+  if (!network.isLocal) {
+    throw usageError('only a local devnet has pre-funded addresses',
+      'a public network is funded from its faucet');
+  }
+
+  if (!network.adminUrl) {
+    throw usageError('this network has no devnet control API',
+      'only a local devnet exposes its genesis');
+  }
+  const funded = await fundedAddresses(network.adminUrl);
+
+  if (hasFlag(args, 'json')) {
+    writeJson({
+      network: network.name,
+      count: funded.length,
+      totalLovelace: funded.reduce((sum: bigint, f: FundedAddress) => sum + BigInt(f.lovelace), 0n).toString(),
+      addresses: funded,
+    });
+    return;
+  }
+
+  process.stderr.write(heading('Genesis addresses') + '\n');
+  process.stderr.write(fields([
+    ['network', network.name],
+    ['count', String(funded.length)],
+  ]) + '\n\n');
+
+  for (const f of funded) {
+    process.stderr.write(`  ${f.address}\n    ${dim(`${f.ada} ADA`)}\n`);
+  }
+  process.stderr.write('\n' + dim('  These hold the devnet\'s starting funds. `ada airdrop` draws from them.') + '\n\n');
 }

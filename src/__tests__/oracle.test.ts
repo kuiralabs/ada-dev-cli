@@ -93,3 +93,74 @@ describe('finding an Ogmios', () => {
     expect(ogmiosUrl(public_)).toBeUndefined();
   });
 });
+
+describe('derivation is delegated, and cross-checked', () => {
+  // The highest-consequence cryptography in the stack. It does not fail loudly
+  // when wrong — it succeeds at the wrong address, and funds sent there are gone.
+  // So it is delegated to IntersectMBO's own tool and never reimplemented, which
+  // also makes every derivation a comparison against the reference.
+  it('honours an explicit binary', async () => {
+    const { resolveBin } = await import('../lib/cardano-address.ts');
+    process.env.ADA_CARDANO_ADDRESS = '/somewhere/cardano-address';
+    expect(resolveBin()).toBe('/somewhere/cardano-address');
+    delete process.env.ADA_CARDANO_ADDRESS;
+  });
+
+  it('names how to get it when absent, rather than failing obscurely', async () => {
+    const { notInstalled } = await import('../lib/cardano-address.ts');
+    const e = notInstalled();
+    expect(e.code).toBe('tool_missing');
+    expect(e.hint).toMatch(/prebuilt binary|releases page/);
+  });
+});
+
+describe('genesis addresses come from the genesis, not a log', () => {
+  // Log-scraping was rejected as too fragile — a format nobody promised to keep.
+  // The same information is in the Shelley genesis the node was started from,
+  // which the control API serves.
+  it('reads initialFunds and reports the richest first', async () => {
+    const { fundedAddresses } = await import('../lib/genesis.ts');
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      initialFunds: {
+        '00c8c47610a36034aac6fc58848bdae5c278d994ff502c05455e3b3ee8f8ed3a0eea0ef835ffa7bbfcde55f7fe9d2cc5d55ea62cecb42bab3c': 1_000_000,
+        '00d8c47610a36034aac6fc58848bdae5c278d994ff502c05455e3b3ee8f8ed3a0eea0ef835ffa7bbfcde55f7fe9d2cc5d55ea62cecb42bab3c': 9_000_000,
+      },
+    }), { status: 200 })) as typeof fetch;
+    try {
+      const funded = await fundedAddresses('http://localhost:10000');
+      expect(funded).toHaveLength(2);
+      expect(BigInt(funded[0].lovelace)).toBeGreaterThan(BigInt(funded[1].lovelace));
+      expect(funded[0].address).toMatch(/^addr_test1/);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('reports an entry it cannot decode rather than dropping it', async () => {
+    // A silently shorter list reads as "the devnet has fewer funded addresses".
+    const { fundedAddresses } = await import('../lib/genesis.ts');
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      initialFunds: { 'not-an-address': 5 },
+    }), { status: 200 })) as typeof fetch;
+    try {
+      const funded = await fundedAddresses('http://localhost:10000');
+      expect(funded).toHaveLength(1);
+      expect(funded[0].address).toContain('undecodable');
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('says the devnet may not be running when the API cannot answer', async () => {
+    const { fundedAddresses } = await import('../lib/genesis.ts');
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => new Response('nope', { status: 503 })) as typeof fetch;
+    try {
+      await expect(fundedAddresses('http://localhost:10000')).rejects.toThrow(/genesis|devnet/i);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});
