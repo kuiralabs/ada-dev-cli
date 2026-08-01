@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import type { Args } from '../lib/argv.ts';
 import { flagValue, hasFlag } from '../lib/argv.ts';
 import { usageError } from '../lib/errors.ts';
-import { writeJson } from '../lib/json-output.ts';
+import { writeJsonEvent } from '../lib/json-output.ts';
 import { loadConfig, resolveNetwork } from '../lib/cli-config.ts';
 import { makeProvider } from '../lib/mesh.ts';
 import { runAiken } from '../lib/aiken.ts';
@@ -72,7 +72,7 @@ export default async function dev(args: Args): Promise<void> {
     process.stdout.write(dim(`  currently ${previous.address}\n\n`));
   }
 
-  await rebuildOn(watching, async () => {
+  await rebuildOn(watching, json, async () => {
     // `runAiken` throws when the compiler is unhappy, which is right for a
     // one-shot command and fatal for a loop: a failing compile is the *normal*
     // case here — it is what you are watching for — and the first syntax error
@@ -107,7 +107,7 @@ export default async function dev(args: Args): Promise<void> {
     const stranded = moved ? await valueAt(network, previous!.address) : undefined;
 
     if (json) {
-      writeJson({
+      writeJsonEvent({
         event: 'rebuild',
         ok: compiled,
         ...(tests ? { tests } : {}),
@@ -219,7 +219,7 @@ function report(r: {
  * Serialised deliberately: a compile triggered while the previous one is still
  * running interleaves two sets of diagnostics and races on plutus.json.
  */
-async function rebuildOn(dirs: string[], onChange: () => Promise<void>): Promise<void> {
+async function rebuildOn(dirs: string[], quiet: boolean, onChange: () => Promise<void>): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
   let running = false;
   let again = false;
@@ -255,7 +255,9 @@ async function rebuildOn(dirs: string[], onChange: () => Promise<void>): Promise
     const stop = () => {
       for (const w of watchers) w.close();
       if (timer) clearTimeout(timer);
-      process.stdout.write(dim('\n  stopped\n'));
+      // Nothing but events on the stream: a trailing "stopped" is a line a
+      // consumer would try to parse as a document.
+      if (!quiet) process.stdout.write(dim('\n  stopped\n'));
       resolve();
     };
     process.once('SIGINT', stop);

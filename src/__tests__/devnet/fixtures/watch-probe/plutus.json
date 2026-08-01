@@ -1,0 +1,39 @@
+{
+  "preamble": {
+    "title": "kuiralabs/watch_probe",
+    "description": "A validator with no dependencies, used to drive the watch loop",
+    "version": "0.0.0",
+    "plutusVersion": "v3",
+    "compiler": {
+      "name": "Aiken",
+      "version": "v1.1.23+8949565"
+    },
+    "license": "Apache-2.0"
+  },
+  "validators": [
+    {
+      "title": "probe.probe.mint",
+      "redeemer": {
+        "title": "redeemer",
+        "schema": {
+          "$ref": "#/definitions/Int"
+        }
+      },
+      "compiledCode": "585701010029800aba2aba1aab9eaab9dab9a4888896600264646644b30013370e900018031baa00289919b8848050dd698048021bae300830073754005164014600c600e002600c004600c00260066ea801a29344d9590011",
+      "hash": "996d1afe484ab8c9d973a2fb6d253af58c935d2a8218eb280f5fbd57"
+    },
+    {
+      "title": "probe.probe.else",
+      "redeemer": {
+        "schema": {}
+      },
+      "compiledCode": "585701010029800aba2aba1aab9eaab9dab9a4888896600264646644b30013370e900018031baa00289919b8848050dd698048021bae300830073754005164014600c600e002600c004600c00260066ea801a29344d9590011",
+      "hash": "996d1afe484ab8c9d973a2fb6d253af58c935d2a8218eb280f5fbd57"
+    }
+  ],
+  "definitions": {
+    "Int": {
+      "dataType": "integer"
+    }
+  }
+}

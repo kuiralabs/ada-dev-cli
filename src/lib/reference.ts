@@ -16,6 +16,16 @@ export interface CommandDoc {
   implemented: boolean;
   /** Longer explanation for `manual`. Omitted where the summary says it all. */
   detail?: string;
+  /**
+   * Emits one JSON document per event rather than one per invocation.
+   *
+   * The output contract is "exactly one document per call", which a watch loop
+   * cannot honour and should not pretend to: an agent following a build wants
+   * the rebuilds as they happen. Declared here rather than explained in prose,
+   * so the contract has a stated exception a test can check instead of an
+   * undocumented one it silently permits.
+   */
+  streaming?: boolean;
   flags?: FlagDoc[];
   examples?: string[];
 }
@@ -73,6 +83,7 @@ export const COMMANDS: CommandDoc[] = [
   },
   {
     name: 'dev',
+    streaming: true,
     usage: 'ada dev [--path <dir>]',
     summary: 'Watch Aiken sources and rebuild, warning when the address moves',
     implemented: true,
@@ -89,8 +100,11 @@ export const COMMANDS: CommandDoc[] = [
       + 'so pass --params to have the address tracked; without them the hash is still reported. '
       + 'With several validators in one blueprint, --module and --validator choose which to follow.\n\n'
       + 'Rebuilds are debounced and serialised: an editor writes a file several times per save, and '
-      + 'a compile started while the previous one is running races on plutus.json. In --json mode '
-      + 'each rebuild emits one document, so the output is a stream rather than a single result.',
+      + 'a compile started while the previous one is running races on plutus.json.\n\n'
+      + 'With --json this is a stream rather than a single result: one document per rebuild, one '
+      + 'document per line, and nothing else on stdout. The usual contract is one document per '
+      + 'invocation, which a loop cannot honour — so the exception is declared on the command and '
+      + 'checked, rather than left for a reader to discover.',
     flags: [
       { flag: '--path <dir>', description: 'the project to watch; defaults to the current directory' },
       { flag: '--params <json>', description: 'compile-time parameters, so the address can be tracked' },

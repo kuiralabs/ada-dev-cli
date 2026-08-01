@@ -16,6 +16,7 @@
 // and in process listings.
 
 import { homedir } from 'node:os';
+import { writeFileAtomic } from './atomic-write.ts';
 import { join } from 'node:path';
 import {
   existsSync, mkdirSync, readFileSync, writeFileSync,
@@ -125,11 +126,10 @@ export function saveWallet(wallet: StoredWallet): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: DIR_MODE });
   const path = walletPath(wallet.name);
   // Write-then-rename so an interrupted write cannot leave a half file that would
-  // read as a wallet with no mnemonic.
-  const tmp = `${path}.tmp`;
+  // read as a wallet with no mnemonic. Every command that opens a wallet rewrites
+  // it to cache the derived address, so concurrent writers are ordinary here.
   const { name: _name, ...body } = wallet;
-  writeFileSync(tmp, JSON.stringify(body, null, 2) + '\n', { mode: FILE_MODE });
-  renameSync(tmp, path);
+  writeFileAtomic(path, JSON.stringify(body, null, 2) + '\n', FILE_MODE);
 }
 
 export function removeWallet(name: string): void {

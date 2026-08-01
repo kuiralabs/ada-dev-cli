@@ -8,6 +8,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { writeFileAtomic } from './atomic-write.ts';
 import { CONFIG_DIR_NAME, CONFIG_FILE_NAME, DEVNET_DEFAULTS } from './constants.ts';
 import { usageError } from './errors.ts';
 
@@ -91,9 +92,7 @@ export function saveConfig(config: AdaConfig): void {
 
   // Write-then-rename: an interrupted write must not leave a truncated file. A
   // zero-byte config has bricked things before; atomicity is cheap here.
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
-  renameSync(tmp, path);
+  writeFileAtomic(path, JSON.stringify(config, null, 2) + '\n', 0o600);
 }
 
 /** Where a preserved unparseable config is moved to. */

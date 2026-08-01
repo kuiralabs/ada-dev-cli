@@ -1,151 +1,18 @@
 // Contract commands, against a real chain.
 //
 // Everything in the unit suite is offline, which is right — CI must fail loudly
-// without a network rather than pass vacuously. But it leaves a gap that this
-// session made obvious: nine "verified live" claims in the tracker rest entirely
-// on someone having typed the commands once and read the output. Nothing
-// re-checks them, so they can quietly stop being true.
+// without a network rather than pass vacuously. These re-check the claims that
+// otherwise rest on someone having typed the commands once and read the output.
 //
-// These do re-check them. They **skip** when no devnet is reachable, because a
-// developer without one running should not see red — but the skip is printed, so
-// it cannot be mistaken for a pass.
-//
-//   ada localnet up && ada wallet use alice && ada airdrop 1000 --yes
+//   ada localnet up && ada wallet use alice && ada airdrop 1000
 //   npm run test:devnet
 
-import { describe, it, expect, afterEach } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import { acceptedFlags } from '../../lib/flags.ts';
+import { describe, it, expect } from 'vitest';
+import {
+  ada, settle, awaitUtxo, chain, BLUEPRINT, NETWORK, TEST_TIMEOUT, CONFIRM_TRIES, IS_LOCAL, paceBetweenTests,
+} from './harness.ts';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const CLI = join(HERE, '..', '..', 'ada.ts');
-const BLUEPRINT = process.env.ADA_TEST_BLUEPRINT
-  ?? join(HERE, 'fixtures', 'hello-world');
-
-/**
- * Which chain to run against, and with whose money.
- *
- *   ADA_TEST_NETWORK=preprod ADA_TEST_WALLET=preprod-test npm run test:chain
- *
- * Parameterised because the preprod pass was done by hand once, and a
- * verification performed once is a claim rather than a check — the same argument
- * that put these tests here in the first place.
- */
-const NETWORK = process.env.ADA_TEST_NETWORK ?? 'devnet';
-const WALLET = process.env.ADA_TEST_WALLET;
-const IS_LOCAL = NETWORK === 'devnet';
-
-/**
- * How long to wait for a transaction to be visible.
- *
- * A devnet produces a block a second; preprod takes about twenty, and being
- * *in* a block is not the same as the indexer having caught up. Measured at
- * roughly 75–90 seconds on preprod, so the ceiling is generous — a test that
- * gives up early reports a failure that is really impatience.
- */
-const SETTLE_MS = IS_LOCAL ? 5_000 : 20_000;
-const CONFIRM_TRIES = IS_LOCAL ? 6 : 15;
-const TEST_TIMEOUT = IS_LOCAL ? 240_000 : 900_000;
-
-const LOCAL_PROBE = 'http://localhost:8080/api/v1/blocks/latest';
-
-/** Run the CLI exactly as a user would, and parse the JSON contract. */
-function ada(args: string[]): Record<string, any> {
-  // Only the flags the command actually takes.
-  //
-  // This used to append `--wallet` to everything, which worked while unknown
-  // flags were silently ignored and stopped working the moment they were not:
-  // `ada tip --wallet x` became an error, the reachability probe failed, and the
-  // whole suite skipped itself reporting "preprod unreachable". Asked of the same
-  // specification the CLI validates against, so the two cannot disagree.
-  const accepts = acceptedFlags(args[0]) ?? [];
-  const withNetwork = [
-    ...args,
-    ...(accepts.includes('network') ? ['--network', NETWORK] : []),
-    ...(WALLET && accepts.includes('wallet') && !args.includes('--wallet') ? ['--wallet', WALLET] : []),
-  ];
-  try {
-    const out = execFileSync('npx', ['tsx', CLI, ...withNetwork, '--json'], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 300_000,
-    });
-    return JSON.parse(out);
-  } catch (err) {
-    // A non-zero exit still carries a JSON document on stdout — that is the
-    // contract, and the failure shape is exactly what several of these assert.
-    const stdout = (err as { stdout?: string }).stdout ?? '';
-    try { return JSON.parse(stdout); } catch { throw err; }
-  }
-}
-
-const settle = () => new Promise((r) => setTimeout(r, SETTLE_MS));
-
-/**
- * Wait for a UTxO to appear at the script address, in a state the test can use.
- *
- * A fixed sleep was fine against one-second blocks and is guesswork against
- * twenty-second ones, so this polls. But existence alone is not enough: an
- * indexer can serve the output before it has attached the datum, and a spend
- * needs the datum. That showed up as the hash-datum test failing *inside* the
- * suite while passing alone — and failing **faster**, which is the signature of
- * winning a race rather than losing to a timeout.
- *
- * So the condition is what the next step actually requires, not merely that
- * something is there.
- */
-async function awaitUtxo(ref: string, needs?: 'datum'): Promise<any> {
-  for (let i = 0; i < CONFIRM_TRIES; i++) {
-    await settle();
-    const at = ada(['contract', 'utxos', '--blueprint', BLUEPRINT]);
-    const found = at.utxos?.find((u: any) => u.ref === ref);
-    if (!found) continue;
-    if (needs === 'datum' && found.datumEncoding === 'none') continue;
-    return found;
-  }
-  throw new Error(`${ref} never became usable at the script address on ${NETWORK}`
-    + (needs ? ` (waiting for its ${needs})` : ''));
-}
-
-async function reachable(): Promise<boolean> {
-  if (!IS_LOCAL) {
-    // A public network is reachable if the tool can read its tip.
-    return ada(['tip']).ok === true;
-  }
-  try {
-    return (await fetch(LOCAL_PROBE, { signal: AbortSignal.timeout(2500) })).ok;
-  } catch {
-    return false;
-  }
-}
-
-// Probed at module scope, deliberately.
-//
-// Doing this in beforeAll silently skipped every test: vitest decides `it` vs
-// `it.skip` while *collecting* the file, which happens before any hook runs, so
-// the flag was always false and the suite reported green having exercised
-// nothing. That is precisely the failure this file exists to prevent, so it is
-// worth the top-level await.
-const available = await reachable();
-if (!available) {
-  console.warn(`\n  ⚠ ${NETWORK} unreachable — skipping chain tests.`
-    + (IS_LOCAL ? ' Start one with: ada localnet up\n' : '\n'));
-}
-
-const chain = () => (available ? it : it.skip);
-
-/**
- * Let the indexer catch up between tests, on a public network only.
- *
- * Each test spends from the same wallet, and a provider serving a stale UTxO set
- * makes the next test build against outputs that are already gone. On a devnet
- * this never shows: blocks are a second and the indexer is in the same process.
- * On preprod it surfaced as one test failing inside the suite while passing
- * alone, which is the shape of a race rather than a defect.
- */
-afterEach(async () => {
-  if (available && !IS_LOCAL) await settle();
-});
+paceBetweenTests();
 
 describe(`contract, against a live chain (${NETWORK})`, () => {
   chain()('has a funded wallet to work with', () => {

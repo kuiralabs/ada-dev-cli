@@ -36,8 +36,12 @@ export function setCurrentCommand(name: string | undefined): void {
   currentCommand = name;
 }
 
-function emit(document: Record<string, unknown>): void {
-  const json = JSON.stringify(document, null, 2) + '\n';
+function emit(document: Record<string, unknown>, compact = false): void {
+  // Indented for a single result, because a person reads it. Compact for a
+  // stream, because a *line* is the unit there — a pretty-printed event spread
+  // over twenty lines is not newline-delimited JSON however it is described,
+  // and a consumer reading line by line gets nothing but parse errors.
+  const json = (compact ? JSON.stringify(document) : JSON.stringify(document, null, 2)) + '\n';
   if (captureTarget) captureTarget(json);
   else process.stdout.write(json);
 }
@@ -49,6 +53,18 @@ function emit(document: Record<string, unknown>): void {
 export function writeJson(data: Record<string, unknown>): void {
   const { ok: _ok, command: _command, ...rest } = data;
   emit({ ok: true, ...(currentCommand ? { command: currentCommand } : {}), ...rest });
+}
+
+/**
+ * One event of a stream, on one line.
+ *
+ * For the commands that run until interrupted and report as they go. Same
+ * document shape as {@link writeJson}; the difference is that a reader consumes
+ * these a line at a time, so a line has to be a whole document.
+ */
+export function writeJsonEvent(data: Record<string, unknown>): void {
+  const { ok: _ok, command: _command, ...rest } = data;
+  emit({ ok: data.ok ?? true, ...(currentCommand ? { command: currentCommand } : {}), ...rest }, true);
 }
 
 /**

@@ -8,9 +8,10 @@
 // and to stdout from another, in two different shapes. An agent piping stdout got
 // nothing on some failures and an unlabelled object on others.
 
+import { COMMANDS } from '../lib/reference.ts';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  writeJson, writeJsonError, setCaptureTarget, setCurrentCommand,
+  writeJson, writeJsonError, writeJsonEvent, setCaptureTarget, setCurrentCommand,
 } from '../lib/json-output.ts';
 
 let captured: string[] = [];
@@ -54,6 +55,54 @@ describe('every document is parseable and self-labelling', () => {
     expect(captured).toHaveLength(1);
     expect(captured[0].endsWith('\n')).toBe(true);
     expect(() => JSON.parse(captured[0])).not.toThrow();
+  });
+
+  it('permits more than one document only where the command declares it', () => {
+    // The contract is one document per invocation, and a watch loop cannot
+    // honour it: an agent following a build wants the rebuilds as they happen.
+    // That exception is declared on the command rather than explained in the
+    // manual, so it is checkable — an undocumented streaming command is the
+    // thing this prevents, not streaming itself.
+    const streaming = COMMANDS.filter((c) => c.streaming).map((c) => c.name);
+    expect(streaming).toEqual(['dev']);
+
+    for (const command of COMMANDS.filter((c) => c.implemented && !c.streaming)) {
+      // Anything that runs until interrupted must say so, since a caller
+      // reading one document and exiting would hang or truncate.
+      expect(command.usage, `${command.name} looks like a watch loop`)
+        .not.toMatch(/\bwatch\b/i);
+    }
+  });
+
+  it('puts a streaming event on exactly one line', () => {
+    // The claim was "one document per event, newline-delimited". It was false:
+    // the writer pretty-printed, so one event spanned twenty lines and a reader
+    // consuming line by line got nothing but parse errors. A stream's unit is
+    // the line, so a line has to be a whole document.
+    writeJsonEvent({ event: 'rebuild', addressChanged: true, nested: { a: 1, b: [2, 3] } });
+    expect(captured).toHaveLength(1);
+
+    const [line] = captured;
+    expect(line.endsWith('\n')).toBe(true);
+    expect(line.trimEnd().includes('\n'), 'the event spans more than one line').toBe(false);
+    expect(() => JSON.parse(line)).not.toThrow();
+  });
+
+  it('stamps a streaming event the same way as a single result', () => {
+    // Same document shape either way; only the formatting differs. An agent
+    // should not need two parsers.
+    setCurrentCommand('dev');
+    writeJsonEvent({ event: 'rebuild' });
+    const doc = JSON.parse(captured[0]);
+    expect(doc.ok).toBe(true);
+    expect(doc.command).toBe('dev');
+    expect(doc.event).toBe('rebuild');
+  });
+
+  it('says so in the human help for a streaming command', () => {
+    const dev = COMMANDS.find((c) => c.name === 'dev');
+    expect(dev?.streaming).toBe(true);
+    expect(dev?.detail).toMatch(/one document/i);
   });
 
   it('includes the command name so a result can be correlated', () => {

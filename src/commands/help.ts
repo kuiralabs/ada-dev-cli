@@ -29,7 +29,9 @@ export default async function help(args: Args): Promise<void> {
     }
     writeJson({
       version: PKG_VERSION,
-      commands: COMMANDS.map(({ name, usage, summary, implemented }) => ({ name, usage, summary, implemented })),
+      commands: COMMANDS.map(({ name, usage, summary, implemented, streaming }) => ({
+        name, usage, summary, implemented, ...(streaming ? { streaming } : {}),
+      })),
       globalFlags: GLOBAL_FLAGS,
     });
     return;
@@ -77,6 +79,10 @@ export default async function help(args: Args): Promise<void> {
 
     // The long explanation stays in `manual`: it runs to several paragraphs for
     // the larger commands, and help is meant to be readable at the point of use.
+    if (doc.streaming) {
+      out.push('', dim('  Runs until interrupted. With --json it emits one document per event,'));
+      out.push(dim('  newline-delimited, rather than one for the whole run.'));
+    }
     if (doc.detail) out.push('', dim(`  The full explanation: ada manual ${doc.name}`));
 
     process.stdout.write(out.join('\n') + '\n');

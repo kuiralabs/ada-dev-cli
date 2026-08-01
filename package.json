@@ -1,7 +1,7 @@
 {
   "name": "ada-dev-cli",
   "version": "0.0.1",
-  "description": "Cardano development CLI — local devnet, wallets, balances, transfers, native assets and atomic swaps from one command surface. Testnets only.",
+  "description": "Cardano development CLI \u2014 local devnet, wallets, balances, transfers, native assets and atomic swaps from one command surface. Testnets only.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "nel349",
@@ -40,8 +40,8 @@
     "test:watch": "vitest",
     "prepublishOnly": "npm run typecheck && npm run test && npm run build",
     "mcp": "tsx src/mcp-server.ts",
-    "test:devnet": "vitest run src/__tests__/devnet",
-    "test:chain": "vitest run src/__tests__/devnet"
+    "test:devnet": "vitest run src/__tests__/devnet --no-file-parallelism",
+    "test:chain": "vitest run src/__tests__/devnet --no-file-parallelism"
   },
   "devDependencies": {
     "@bloxbean/yaci-devkit": "^0.11.0-beta1",
