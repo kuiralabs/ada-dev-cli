@@ -220,7 +220,7 @@ export const COMMANDS: CommandDoc[] = [
       'A named-wallet model with one active wallet. Keys live in ~/.ada/wallets at mode 0600, '
       + 'UNENCRYPTED — these are development keys, and mainnet is refused outright for that reason. '
       + '`info` shows the payment address, the stake address and the derivation path; the two '
-      + 'addresses are not interchangeable.',
+      + 'addresses are not interchangeable.\n\nA freshly generated wallet becomes the active one — it is what you just asked for, and leaving the previous one active is a reliable source of confusion. `wallet use` switches back, and `wallet list` marks the active one.',
     flags: [
       { flag: '--show-mnemonic', description: 'print the recovery phrase (wallet info only)' },
       { flag: '--force', description: 'replace an existing wallet of the same name (generate only)' },
@@ -325,6 +325,12 @@ export const COMMANDS: CommandDoc[] = [
       + 'here that genuinely publishes code once, and the honest reading of "deploy". By default the '
       + 'output sits at the script address where nobody can spend it, which is what makes the '
       + 'reference dependable; --to-self keeps the ADA recoverable.\n\n'
+      + '`unlock --script-ref` is the other half of that, and without it publishing was write-only: '
+      + 'the transaction points at the published copy rather than carrying the validator\'s bytes. '
+      + 'On hello-world that is 574 bytes against 342, and the saving scales with the script — for a '
+      + 'large validator it is the difference between fitting in a transaction and not. The hash is '
+      + 'declared alongside the reference, so a UTxO holding a different script is refused by the '
+      + 'ledger rather than quietly running something else.\n\n'
       + '`mint` mints or burns under a Plutus policy, where the script hash is the policy id. A '
       + 'negative --qty burns. --spend names a UTxO the policy requires be consumed, which is how a '
       + 'one-shot policy guarantees it can only ever mint once. `asset mint` remains the '
@@ -387,6 +393,7 @@ export const COMMANDS: CommandDoc[] = [
       { flag: '--spend <hash>#<ix>', description: 'UTxO the policy requires be consumed (mint)' },
       { flag: '--to-self', description: 'park a reference script where it can be recovered (publish)' },
       { flag: '--read-only <ref>', description: 'UTxOs to read without spending (CIP-31), comma-separated' },
+      { flag: '--script-ref <ref>', description: 'spend using a published reference script instead of carrying it (CIP-33)' },
       { flag: '--signer <hash>', description: 'other public-key hashes the validator requires, comma-separated' },
       { flag: '--valid-from <slot|now>', description: 'earliest slot the transaction may be accepted' },
       { flag: '--valid-until <slot>', description: 'latest slot the transaction may be accepted' },

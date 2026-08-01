@@ -56,16 +56,26 @@ export default async function transfer(args: Args): Promise<void> {
   const outputAmount = [{ unit: LOVELACE_UNIT, quantity: amount.toString() }];
   assertMeetsMinValue(to, outputAmount, params.coinsPerUtxoSize);
 
-  const builder = makeTxBuilder(ctx.provider);
-  builder
-    .txOut(to, outputAmount)
-    .changeAddress(ctx.payment)
-    .selectUtxosFrom(utxos)
-    .setNetwork(meshNetworkName(ctx.network.name));
+  // Built through a function rather than inline, so it can be built a second
+  // time at a price the ledger will accept. A Mesh builder is single-use, so a
+  // retry cannot reuse the one that was already completed.
+  // Held so the reported fee and outputs come from the transaction that was
+  // actually submitted — including a rebuild at the ledger's price.
+  let builder = makeTxBuilder(ctx.provider);
+  const build = async (fee?: string): Promise<string> => {
+    builder = makeTxBuilder(ctx.provider);
+    builder
+      .txOut(to, outputAmount)
+      .changeAddress(ctx.payment)
+      .selectUtxosFrom(utxos)
+      .setNetwork(meshNetworkName(ctx.network.name));
+    if (fee) builder.setFee(fee);
+    return withoutCostModelNoise(() => builder.complete());
+  };
 
   let unsignedTx: string;
   try {
-    unsignedTx = await withoutCostModelNoise(() => builder.complete());
+    unsignedTx = await build();
   } catch (err) {
     throw translateBuildFailure(err, {
       what: 'transfer',
@@ -122,7 +132,7 @@ export default async function transfer(args: Args): Promise<void> {
     return;
   }
 
-  const txHash = await signAndSubmit(ctx, unsignedTx);
+  const txHash = await signAndSubmit(ctx, unsignedTx, build);
 
   if (json) {
     writeJson({

@@ -7,6 +7,7 @@ import {
   loadConfig, loadConfigState, saveConfig, configPath, invalidConfigPath,
   assertNetworkName, type AdaConfig,
 } from '../lib/cli-config.ts';
+import { listWallets } from '../lib/wallet-store.ts';
 import { usageError } from '../lib/errors.ts';
 import { writeJson } from '../lib/json-output.ts';
 import { fields, heading, ok, warn } from '../ui/format.ts';
@@ -65,6 +66,10 @@ function set(key: string | undefined, value: string | undefined, json: boolean):
   if (key === 'network') {
     cfg.network = assertNetworkName(value);
   } else if (key === 'activeWallet') {
+    // Checked now rather than at the next command. Writing a wallet that does
+    // not exist leaves every later invocation failing on a name the user has
+    // since forgotten typing, and the config is the last place they would look.
+    assertWalletExists(value);
     cfg.activeWallet = value;
   } else if (key.startsWith('endpoints.')) {
     const [, networkPart, field] = key.split('.');
@@ -78,6 +83,10 @@ function set(key: string | undefined, value: string | undefined, json: boolean):
     if (field !== 'apiUrl' && field !== 'adminUrl') {
       throw usageError(`unknown endpoint field: ${field}`, 'one of: apiUrl, adminUrl');
     }
+    // An endpoint that is not a URL bricks the tool until it is unset, and the
+    // failure arrives as `devnet_not_running` from a devnet that is running
+    // perfectly well. Refusing here costs nothing and saves that hunt.
+    assertEndpointUrl(value);
     cfg.endpoints[network] = { ...cfg.endpoints[network], [field]: value };
   } else {
     throw usageError(
@@ -128,4 +137,36 @@ function readPath(cfg: AdaConfig, key: string): unknown {
     }
     return undefined;
   }, cfg);
+}
+
+/**
+ * An endpoint has to be an absolute http(s) URL.
+ *
+ * `ada config set endpoints.devnet.apiUrl junk` was accepted, and every command
+ * afterwards reported `devnet_not_running` — for a devnet that was running, with
+ * `ada status` cheerfully showing its pid. The config is the last place anybody
+ * looks for that, so the value is checked where it is written.
+ */
+function assertEndpointUrl(value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw usageError(`not a URL: ${value}`,
+      'an endpoint is absolute, like http://localhost:8080/api/v1');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw usageError(`an endpoint must be http or https, not ${url.protocol.replace(':', '')}`,
+      'for example http://localhost:8080/api/v1');
+  }
+}
+
+/** The active wallet has to be one that exists. */
+function assertWalletExists(name: string): void {
+  const known = listWallets();
+  if (known.some((w) => w.name === name)) return;
+  throw usageError(`no wallet named ${name}`,
+    known.length > 0
+      ? `there is ${known.map((w) => w.name).join(', ')} — or create one with: ada wallet generate ${name}`
+      : 'create one with: ada wallet generate <name>');
 }

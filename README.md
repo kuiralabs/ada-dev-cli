@@ -113,6 +113,13 @@ happily and the funds at the old one stop being mentioned. `ada dev` watches for
 saves, reruns the tests, and says when the address changed and how much was left
 behind.
 
+**Publish a script once, point at it after.** `ada contract publish` writes a
+CIP-33 reference script — the validator's bytes parked in a UTxO — and
+`ada contract unlock --script-ref <ref>` spends by pointing at that copy instead
+of carrying one. On the hello-world example that is 574 bytes against 342, and
+the saving scales with the script: for a large validator it decides whether the
+transaction fits at all.
+
 **A validator that keeps state.** `unlock` can do more than drain a script. `--continue <ada>` with
 `--continue-datum <json>` returns value to the same address under a new datum, which is what makes a
 validator a state machine rather than a one-shot escrow — an auction taking a higher bid, a vesting

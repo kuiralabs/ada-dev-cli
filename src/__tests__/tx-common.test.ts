@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   assertMeetsMinValue, noUtxosError, translateBuildFailure, assertRecipient,
-} from '../lib/tx-common.ts';
+ requiredFeeFrom,} from '../lib/tx-common.ts';
 import { AdaError } from '../lib/errors.ts';
 import { LOVELACE_UNIT } from '../lib/amount.ts';
 
@@ -154,5 +154,66 @@ describe('checking a recipient before sending value to it', () => {
   it("uses the caller's own words for what was expected", () => {
     expect(() => assertRecipient('nonsense', { what: 'not a counterparty address' }))
       .toThrow(/not a counterparty address/);
+  });
+});
+
+describe('a fee the ledger considers too small', () => {
+  it('takes the figure the node asked for', () => {
+    // The builder computes a fee before it knows what the change output will
+    // finally hold, so a transaction whose change carries native assets can be
+    // under-priced. Observed on a plain transfer from a wallet holding one
+    // token: the ledger wanted 189,922 and the transaction offered 178,041.
+    expect(requiredFeeFrom('ConwayUtxowFailure (UtxoFailure (FeeTooSmallUTxO (Coin 189922) (Coin 178041)))'))
+      .toBe('189922');
+  });
+
+  it('takes the required figure, not the supplied one', () => {
+    // Getting these the wrong way round would rebuild at the price that was
+    // just refused, and the retry would fail identically.
+    expect(requiredFeeFrom('FeeTooSmallUTxO (Coin 190303) (Coin 182397)')).toBe('190303');
+  });
+
+  it('tolerates the whitespace a node actually emits', () => {
+    expect(requiredFeeFrom('FeeTooSmallUTxO(Coin 100)(Coin 90)')).toBe('100');
+  });
+
+  it('reads the newer Mismatch record, where the order is reversed', () => {
+    // preprod runs a newer node than the devkit ships, and it phrases the same
+    // failure differently — with what was *supplied* first. Reading positionally
+    // here would rebuild at the price just refused, and the retry would fail
+    // identically. Only preprod could have found this.
+    expect(requiredFeeFrom(
+      'ConwayUtxowFailure (UtxoFailure (FeeTooSmallUTxO (Mismatch '
+      + '{mismatchSupplied = Coin 171397, mismatchExpected = Coin 175328})))',
+    )).toBe('175328');
+  });
+
+  it('reads the RelGTEQ spelling too', () => {
+    expect(requiredFeeFrom(
+      'FeeTooSmallUTxO Mismatch (RelGTEQ) {supplied: Coin 171397, expected: Coin 175328}',
+    )).toBe('175328');
+  });
+
+  it('never returns the supplied figure, in any spelling', () => {
+    // The failure mode that matters: rebuilding at a price already refused.
+    const supplied = ['178041', '171397', '171397'];
+    const messages = [
+      'FeeTooSmallUTxO (Coin 189922) (Coin 178041)',
+      'FeeTooSmallUTxO (Mismatch {mismatchSupplied = Coin 171397, mismatchExpected = Coin 175328})',
+      'FeeTooSmallUTxO Mismatch (RelGTEQ) {supplied: Coin 171397, expected: Coin 175328}',
+    ];
+    messages.forEach((m, i) => expect(requiredFeeFrom(m), m).not.toBe(supplied[i]));
+  });
+
+  it('ignores a Coin figure from an unrelated failure', () => {
+    expect(requiredFeeFrom('ValueNotConservedUTxO (Coin 100) (Coin 90)')).toBeUndefined();
+  });
+
+  it('says nothing for a rejection that is about something else', () => {
+    // Only this failure is worth a repriced retry; rebuilding for any other
+    // reason would spend real coin chasing a problem it cannot fix.
+    expect(requiredFeeFrom('ValueNotConservedUTxO')).toBeUndefined();
+    expect(requiredFeeFrom('All inputs are spent')).toBeUndefined();
+    expect(requiredFeeFrom('')).toBeUndefined();
   });
 });

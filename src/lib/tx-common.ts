@@ -20,7 +20,10 @@ import type { NetworkName } from './cli-config.ts';
  * silent regression in whichever file was missed.
  */
 const BUILDER_FAILURES = {
-  insufficientFunds: /insufficient|not enough|UTxO Balance Insufficient/i,
+  // `UTxO Fully Depleted` is what the builder says when coin selection ran out,
+  // which is the same problem in different words — and it is what you get for
+  // trying to send your whole balance, something everybody does once.
+  insufficientFunds: /insufficient|not enough|UTxO Balance Insufficient|Fully Depleted/i,
   belowMinValue: /minimum|min.?ada|min.?utxo|too small/i,
 } as const;
 
@@ -148,13 +151,68 @@ export function withMinValue(
   };
 }
 
-/** Sign and submit, with one error shape rather than one per command. */
-export async function signAndSubmit(ctx: ActiveContext, unsignedTx: string): Promise<string> {
+/**
+ * Sign and submit, with one error shape rather than one per command.
+ *
+ * `rebuild` is how a caller recovers from a fee the ledger considers too small.
+ * The builder computes a fee before it knows what the change output will finally
+ * hold, so a transaction whose change carries native assets can be under-priced
+ * — observed on a plain transfer from a wallet holding one token: the ledger
+ * wanted 189,922 lovelace and the transaction offered 178,041.
+ *
+ * The node states the figure it requires, so this rebuilds at that price and
+ * submits again. Once only: a second refusal is a different problem, and a loop
+ * that keeps raising the fee would burn real coin chasing it.
+ */
+export async function signAndSubmit(
+  ctx: ActiveContext,
+  unsignedTx: string,
+  rebuild?: (feeLovelace: string) => Promise<string>,
+): Promise<string> {
   try {
     return await ctx.wallet.submitTx(await ctx.wallet.signTx(unsignedTx));
   } catch (err) {
-    throw translateSubmitFailure(err);
+    const required = requiredFeeFrom(err instanceof Error ? err.message : String(err));
+    if (required === undefined || !rebuild) throw translateSubmitFailure(err);
+
+    try {
+      const repriced = await rebuild(required);
+      return await ctx.wallet.submitTx(await ctx.wallet.signTx(repriced));
+    } catch (retryErr) {
+      throw translateSubmitFailure(retryErr);
+    }
   }
+}
+
+/**
+ * The fee the ledger says it wanted, when that is why it refused.
+ *
+ * Three spellings, because nodes of different vintages phrase it differently and
+ * this must work on all of them:
+ *
+ *   FeeTooSmallUTxO (Coin 189922) (Coin 178041)
+ *   FeeTooSmallUTxO (Mismatch {mismatchSupplied = Coin 171397, mismatchExpected = Coin 175328})
+ *   FeeTooSmallUTxO Mismatch (RelGTEQ) {supplied: Coin 171397, expected: Coin 175328}
+ *
+ * **The order is not the same.** The positional form puts the required figure
+ * first; both Mismatch forms put what was supplied first. Reading positionally
+ * across all three would rebuild at the price that was just refused, and the
+ * retry would fail identically — so the named forms are matched by name and only
+ * the positional one is read by position.
+ *
+ * Found by running against preprod: the devnet ships an older node, so the
+ * positional form was the only one this had ever seen.
+ */
+export function requiredFeeFrom(message: string): string | undefined {
+  if (!/FeeTooSmallUTxO/.test(message)) return undefined;
+
+  // Named first: unambiguous, and says which number is which.
+  const named = message.match(/(?:mismatchExpected\s*=\s*|expected:\s*)Coin\s+(\d+)/);
+  if (named) return named[1];
+
+  // Positional, older nodes: required then supplied.
+  const positional = message.match(/FeeTooSmallUTxO\s*\(Coin\s+(\d+)\)\s*\(Coin\s+(\d+)\)/);
+  return positional ? positional[1] : undefined;
 }
 
 /**
@@ -335,7 +393,8 @@ export function translateBuildFailure(
       'insufficient_funds',
       context.detail ?? `not enough ADA to cover the ${context.what} and its fee`,
       EXIT_CHAIN_REJECTED,
-      'fund the wallet with: ada airdrop 1000',
+      'every transaction pays a fee from the same balance, so the whole of it can never be sent — '
+      + 'leave a little behind, or fund the wallet with: ada airdrop 1000',
     );
   }
 

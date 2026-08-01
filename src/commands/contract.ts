@@ -141,7 +141,10 @@ async function inspect(args: Args): Promise<void> {
 
   if (d.parameters.length > 0) {
     process.stdout.write('\n' + bold('  Parameters') + dim(' — compile-time, must be applied') + '\n');
-    for (const p of d.parameters) process.stdout.write(`    ${p}\n`);
+    const width = d.parameters.reduce((max, p) => Math.max(max, p.name.length), 0);
+    for (const p of d.parameters) {
+      process.stdout.write(`    ${p.name.padEnd(width)}  ${dim(p.expects ?? '(shape not declared)')}\n`);
+    }
     process.stdout.write('\n' + dim('  Applying parameters changes the hash, and so the address.') + '\n');
     process.stdout.write(dim(`  Supply them: ada contract address --params '[…]'`) + '\n');
   }
@@ -154,7 +157,7 @@ interface Described {
   hash: string | null;
   datum: string | null;
   redeemer: string | null;
-  parameters: string[];
+  parameters: { name: string; expects: string | null }[];
 }
 
 function describe(loaded: LoadedBlueprint, v: BlueprintValidator): Described {
@@ -166,7 +169,13 @@ function describe(loaded: LoadedBlueprint, v: BlueprintValidator): Described {
     hash: v.hash ?? null,
     datum: v.datum?.title ?? null,
     redeemer: v.redeemer?.title ?? null,
-    parameters: (v.parameters ?? []).map((p, i) => p.title ?? `#${i}`),
+    parameters: (v.parameters ?? []).map((p, i) => ({
+      name: p.title ?? `#${i}`,
+      // The shape, not only the name. A parameter that is a bare hash is
+      // guessable; one that is a structured Address is not, and working out
+      // that it wanted nested constructors cost an afternoon.
+      expects: describeExpected(p.schema, loaded) ?? null,
+    })),
   };
 }
 
@@ -279,18 +288,26 @@ async function lock(args: Args): Promise<void> {
   // a UTxO created by another tool may well carry one.
   const asHash = hasFlag(args, 'datum-hash');
 
-  const builder = makeTxBuilder(ctx.provider); // a lock is a plain payment — no script runs
-  let unsigned: string;
-  try {
-    const b = builder.txOut(output.address, output.amount);
+  // Built through a function so it can be built again at a price the ledger
+  // will accept; see signAndSubmit. A Mesh builder is single-use, so a retry
+  // cannot reuse the one already completed.
+  const build = async (fee?: string): Promise<string> => {
+    const b = makeTxBuilder(ctx.provider); // a lock is a plain payment — no script runs
+    if (fee) b.setFee(fee);
+    b.txOut(output.address, output.amount);
     if (asHash) b.txOutDatumHashValue(datum.value as never);
     else b.txOutInlineDatumValue(datum.value as never);
     applyExtras(b, { readOnly: [], signers: [], validity });
 
-    unsigned = await withoutCostModelNoise(() => b
+    return withoutCostModelNoise(() => b
       .changeAddress(ctx.payment)
       .selectUtxosFrom(utxos)
       .complete());
+  };
+
+  let unsigned: string;
+  try {
+    unsigned = await build();
   } catch (err) {
     throw translateBuildFailure(err, {
       what: `lock ${formatAda(lovelace)} ADA at ${identity.address}`,
@@ -299,7 +316,7 @@ async function lock(args: Args): Promise<void> {
   }
 
   const submitted = hasFlag(args, 'yes');
-  const txHash = submitted ? await signAndSubmit(ctx, unsigned) : null;
+  const txHash = submitted ? await signAndSubmit(ctx, unsigned, build) : null;
 
   if (hasFlag(args, 'json')) {
     writeJson({
@@ -415,6 +432,8 @@ interface SpendContext {
   mintAlong?: MintAlong;
   /** Set when --continue carries the contract's state forward. */
   carryOn?: CarryOn;
+  /** A published copy of this validator, pointed at instead of carried. */
+  scriptRef?: { txHash: string; index: number };
   /** Outputs to third parties: refunds, payouts, fee splits. */
   payouts: Payout[];
   extras: TxExtras;
@@ -565,6 +584,7 @@ async function prepareSpend(args: Args, ctx: ActiveContext): Promise<SpendContex
   // --continue-datum, because the network call happened first.
   const carryOn = readCarryOn(args, loaded, validator);
   const payouts = readPayouts(args);
+  const scriptRef = readScriptRef(args);
 
   const target = await resolveScriptUtxo(args, ctx, identity.address);
 
@@ -583,7 +603,7 @@ async function prepareSpend(args: Args, ctx: ActiveContext): Promise<SpendContex
 
   return {
     identity, code, target, redeemer, datumMode, collateral, utxos, protocol,
-    evaluator, costModels, mintAlong, carryOn, payouts, extras,
+    evaluator, costModels, mintAlong, carryOn, payouts, scriptRef, extras,
   };
 }
 
@@ -630,6 +650,29 @@ function readCarryOn(
 }
 
 /**
+ * `--script-ref <hash>#<ix>` — spend using a published copy of the validator.
+ *
+ * A CIP-33 reference script lives in somebody's UTxO, and a transaction that
+ * points at it does not carry the validator's bytes itself. For a large script
+ * that is the difference between fitting in a transaction and not, and it is
+ * exactly what `contract publish` writes — `publish --json` reports the
+ * reference to pass here.
+ *
+ * The script still has to be the right one: its hash is declared alongside, so
+ * a reference holding a different validator is rejected by the ledger rather
+ * than silently running something else.
+ */
+function readScriptRef(args: Args): { txHash: string; index: number } | undefined {
+  const raw = flagValue(args, 'script-ref');
+  if (!raw) return undefined;
+
+  // parseOutputRefs rejects a malformed reference itself, and takes a list —
+  // one script is spent per transaction here, so only the first is meaningful.
+  const [ref] = parseOutputRefs(raw, '--script-ref');
+  return ref;
+}
+
+/**
  * `--pay <addr>:<ada>` — value to somebody who is not the spender.
  *
  * Change alone cannot express this: it all returns to one address. A validator
@@ -656,15 +699,32 @@ function readPayouts(args: Args): Payout[] {
 }
 
 /** Build the spending transaction. One definition, two callers. */
-async function buildSpend(ctx: ActiveContext, spend: SpendContext): Promise<string> {
+async function buildSpend(ctx: ActiveContext, spend: SpendContext, fee?: string): Promise<string> {
   const signerHash = await pubKeyHashOf(ctx);
   try {
-    const b = makeTxBuilder(ctx.provider, { withScripts: true, evaluator: spend.evaluator, costModels: spend.costModels })
+    const b = makeTxBuilder(ctx.provider, { withScripts: true, evaluator: spend.evaluator, costModels: spend.costModels });
+    // A price the ledger named, when it refused the first attempt. See
+    // signAndSubmit: the builder cannot know what the change output will finally
+    // hold, so a transaction whose change carries native assets is under-priced.
+    if (fee) b.setFee(fee);
+    b
       .spendingPlutusScript(spend.identity.version)
       .txIn(spend.target.input.txHash, spend.target.input.outputIndex,
             spend.target.output.amount, spend.target.output.address)
-      .txInScript(spend.code)
       .txInRedeemerValue(spend.redeemer.value as never);
+
+    // Point at a published copy, or carry the bytes. `publish` existed and
+    // nothing could consume what it wrote, so the manual's whole argument for
+    // it — later transactions point at the script instead of each carrying a
+    // copy — was a claim the tool could not honour.
+    if (spend.scriptRef) {
+      b.spendingTxInReference(
+        spend.scriptRef.txHash, spend.scriptRef.index,
+        String(Math.ceil(spend.code.length / 2)), spend.identity.hash,
+      );
+    } else {
+      b.txInScript(spend.code);
+    }
 
     if (spend.datumMode.inline) b.txInInlineDatumPresent();
     else b.txInDatumValue(spend.datumMode.value as never);
@@ -742,7 +802,9 @@ async function unlock(args: Args): Promise<void> {
   const unsigned = await buildSpend(ctx, spend);
 
   const submitted = hasFlag(args, 'yes');
-  const txHash = submitted ? await signAndSubmit(ctx, unsigned) : null;
+  const txHash = submitted
+    ? await signAndSubmit(ctx, unsigned, (fee) => buildSpend(ctx, spend, fee))
+    : null;
   const recovered = target.output.amount.find((a) => a.unit === LOVELACE_UNIT)?.quantity ?? '0';
 
   if (hasFlag(args, 'json')) {
@@ -1193,21 +1255,27 @@ async function publish(args: Args): Promise<void> {
   const protocol = await ctx.provider.fetchProtocolParameters();
   const utxos = await ctx.wallet.getUtxos();
 
-  let unsigned: string;
-  try {
+  // Rebuildable at the ledger's price; see signAndSubmit.
+  const build = async (fee?: string): Promise<string> => {
     const b = makeTxBuilder(ctx.provider)
       .txOut(holder, [])
       .txOutReferenceScript(code, identity.version);
+    if (fee) b.setFee(fee);
     applyExtras(b, { readOnly: [], signers: [], validity });
     // A reference output still needs its minimum ADA, and the script bytes make
     // it large — this is the one case where that minimum is a real number rather
     // than a formality.
     if (toSelf) b.txOutInlineDatumValue((await unitDatum()) as never);
 
-    unsigned = await withoutCostModelNoise(() => b
+    return withoutCostModelNoise(() => b
       .changeAddress(ctx.payment)
       .selectUtxosFrom(utxos)
       .complete());
+  };
+
+  let unsigned: string;
+  try {
+    unsigned = await build();
   } catch (err) {
     throw translateBuildFailure(err, {
       what: `publish a ${scriptBytesLength}-byte reference script`,
@@ -1216,7 +1284,7 @@ async function publish(args: Args): Promise<void> {
   }
 
   const submitted = hasFlag(args, 'yes');
-  const txHash = submitted ? await signAndSubmit(ctx, unsigned) : null;
+  const txHash = submitted ? await signAndSubmit(ctx, unsigned, build) : null;
 
   if (hasFlag(args, 'json')) {
     writeJson({
@@ -1309,9 +1377,10 @@ async function mint(args: Args): Promise<void> {
       `available: ${utxos.slice(0, 4).map(refOf).join(', ')}`);
   }
 
-  let unsigned: string;
-  try {
+  // Rebuildable at the ledger's price; see signAndSubmit.
+  const build = async (fee?: string): Promise<string> => {
     const b = makeTxBuilder(ctx.provider, { withScripts: true, evaluator, costModels: mintCostModels });
+    if (fee) b.setFee(fee);
     if (seed) b.txIn(seed.input.txHash, seed.input.outputIndex, seed.output.amount, seed.output.address);
 
     b.mintPlutusScript(identity.version)
@@ -1321,18 +1390,23 @@ async function mint(args: Args): Promise<void> {
 
     applyExtras(b, mintExtras);
 
-    unsigned = await withoutCostModelNoise(() => b
+    return withoutCostModelNoise(() => b
       .txInCollateral(collateral.input.txHash, collateral.input.outputIndex,
                       collateral.output.amount, collateral.output.address)
       .changeAddress(ctx.payment)
       .selectUtxosFrom(seed ? utxos.filter((u) => refOf(u) !== seedRef) : utxos)
       .complete());
+  };
+
+  let unsigned: string;
+  try {
+    unsigned = await build();
   } catch (err) {
     throw translateScriptFailure(err, identity.address);
   }
 
   const submitted = hasFlag(args, 'yes');
-  const txHash = submitted ? await signAndSubmit(ctx, unsigned) : null;
+  const txHash = submitted ? await signAndSubmit(ctx, unsigned, build) : null;
   const burning = quantity < 0n;
 
   if (hasFlag(args, 'json')) {

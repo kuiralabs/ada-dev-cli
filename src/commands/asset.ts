@@ -102,8 +102,13 @@ async function mint(args: Args): Promise<void> {
   const utxos = await ctx.wallet.getUtxos();
   if (utxos.length === 0) throw noUtxosError(ctx.stored.name);
 
-  const builder = makeTxBuilder(ctx.provider);
-  builder
+  // Built through a function so it can be built again at a price the ledger
+  // will accept; see signAndSubmit. A Mesh builder is single-use.
+  let builder = makeTxBuilder(ctx.provider);
+  const build = async (fee?: string): Promise<string> => {
+    builder = makeTxBuilder(ctx.provider);
+    if (fee) builder.setFee(fee);
+    builder
     .mint(quantity.toString(), policyId, assetNameHex)
     .mintingScript(forgeScript)
     // CIP-25 keys metadata by policy id then asset name, which is what wallets and
@@ -115,10 +120,12 @@ async function mint(args: Args): Promise<void> {
     .changeAddress(ctx.payment)
     .selectUtxosFrom(utxos)
     .setNetwork(meshNetworkName(ctx.network.name));
+    return withoutCostModelNoise(() => builder.complete());
+  };
 
   let unsignedTx: string;
   try {
-    unsignedTx = await withoutCostModelNoise(() => builder.complete());
+    unsignedTx = await build();
   } catch (err) {
     throw translateBuildFailure(err, { what: 'mint' });
   }
@@ -141,7 +148,7 @@ async function mint(args: Args): Promise<void> {
     return;
   }
 
-  const txHash = await signAndSubmit(ctx, unsignedTx);
+  const txHash = await signAndSubmit(ctx, unsignedTx, build);
 
   if (json) {
     writeJson({
@@ -198,16 +205,24 @@ async function send(args: Args): Promise<void> {
     }
   }
 
-  const builder = makeTxBuilder(ctx.provider);
-  builder
-    .txOut(to, bundle.map(({ unit, quantity }) => ({ unit, quantity: quantity.toString() })))
-    .changeAddress(ctx.payment)
-    .selectUtxosFrom(utxos)
-    .setNetwork(meshNetworkName(ctx.network.name));
+  // Rebuildable at the ledger's price; see signAndSubmit. Sending assets is the
+  // case most likely to need it: the change output carries whatever of the
+  // bundle was not sent, which is exactly what the builder prices too early.
+  let builder = makeTxBuilder(ctx.provider);
+  const build = async (fee?: string): Promise<string> => {
+    builder = makeTxBuilder(ctx.provider);
+    if (fee) builder.setFee(fee);
+    builder
+      .txOut(to, bundle.map(({ unit, quantity }) => ({ unit, quantity: quantity.toString() })))
+      .changeAddress(ctx.payment)
+      .selectUtxosFrom(utxos)
+      .setNetwork(meshNetworkName(ctx.network.name));
+    return withoutCostModelNoise(() => builder.complete());
+  };
 
   let unsignedTx: string;
   try {
-    unsignedTx = await withoutCostModelNoise(() => builder.complete());
+    unsignedTx = await build();
   } catch (err) {
     throw translateBuildFailure(err, {
       what: 'asset transfer',
@@ -246,7 +261,7 @@ async function send(args: Args): Promise<void> {
     return;
   }
 
-  const txHash = await signAndSubmit(ctx, unsignedTx);
+  const txHash = await signAndSubmit(ctx, unsignedTx, build);
 
   if (json) {
     writeJson({

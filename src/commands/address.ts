@@ -112,6 +112,28 @@ async function derive(args: Args): Promise<void> {
     if (!Number.isInteger(n) || n < 0) throw usageError(`${label} must be a whole number, got: ${n}`);
   }
 
+  // BIP-32 indices are 31 bits; the top bit marks a hardened path and is not a
+  // caller's to set. Above that, `cardano-address` fails with a message about
+  // its own internals, which reads as a broken tool rather than a bad number.
+  const MAX_INDEX = 2 ** 31 - 1;
+  for (const [label, n] of [['--account', account], ['--index', index]] as const) {
+    if (n > MAX_INDEX) {
+      throw usageError(`${label} must be below ${MAX_INDEX}, got: ${n}`,
+        'derivation indices are 31 bits — the top bit marks a hardened path');
+    }
+  }
+
+  // CIP-1852 gives role 0 to receiving addresses and 1 to change; 2 is the
+  // staking key, which this derives on its own and which is not a payment path.
+  // Anything else derived happily and produced an address at a path nobody
+  // would think to look at again — `--role 9` gave m/1852'/1815'/0'/9/0, and
+  // funds sent there are reachable only by someone who remembers the number.
+  if (role !== 0 && role !== 1) {
+    throw usageError(`--role must be 0 or 1, got: ${role}`,
+      'CIP-1852 uses 0 for receiving addresses and 1 for change; the staking key '
+      + 'comes from role 2 and is derived for you');
+  }
+
   const derived = deriveWithReference(stored.mnemonic, network.name, account, index, role);
 
   // Compare against what the wallet itself holds, when the path is the one it

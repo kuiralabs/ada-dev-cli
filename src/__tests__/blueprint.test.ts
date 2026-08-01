@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   loadBlueprint, selectValidator, scriptBytes, scriptIdentity, assertParametersApplied,
-  splitTitle, listNames, handlersOf, parseParams, type Blueprint,
+  splitTitle, listNames, handlersOf, parseParams, describeExpected, type Blueprint,
 } from '../lib/blueprint.ts';
 import { AdaError } from '../lib/errors.ts';
 
@@ -255,5 +255,37 @@ describe('parsing --params', () => {
 
   it('rejects malformed JSON', () => {
     expect(() => parseParams('[1,')).toThrow(/not valid JSON/);
+  });
+});
+
+describe('a parameter with a shape', () => {
+  it('describes what it expects, not only its name', () => {
+    // `inspect` reported a bare `oracle` for a parameter wanting a structured
+    // Address, and working out that it needed nested constructors was
+    // hand-derivation from the CIP. The blueprint carried the schema all along;
+    // nothing ever asked it for one.
+    const doc: Blueprint = {
+      preamble: { title: 'kuiralabs/price_gate', plutusVersion: 'v3' },
+      definitions: {
+        'cardano/address/Address': {
+          title: 'Address',
+          anyOf: [{ title: 'Address', dataType: 'constructor', index: 0, fields: [{}, {}] }],
+        },
+      },
+      validators: [{
+        title: 'gate.gate.spend',
+        compiledCode: HELLO_COMPILED,
+        hash: HELLO_HASH,
+        parameters: [{ title: 'oracle', schema: { $ref: '#/definitions/cardano~1address~1Address' } }],
+      }],
+    };
+    const loaded = { path: 'plutus.json', doc, version: 'V3' as const };
+    const described = describeExpected(doc.validators[0].parameters?.[0].schema, loaded);
+    expect(described).toContain('Address');
+  });
+
+  it('says nothing rather than guessing when no schema is declared', () => {
+    const loaded = { path: 'plutus.json', doc: helloDoc, version: 'V3' as const };
+    expect(describeExpected(undefined, loaded)).toBeUndefined();
   });
 });

@@ -138,8 +138,12 @@ async function build(args: Args): Promise<void> {
   // anyone who receives the offer and signs completes the swap. Reviewing the
   // figures before that signature exists is the point.
   if (!hasFlag(args, 'yes')) {
-    process.stdout.write(heading('Swap offer — not yet signed') + '\n');
-    process.stdout.write(fields([
+    // To stderr, always. This is decoration around a refusal, and the refusal
+    // itself is the result — in --json mode stdout must carry that one document
+    // and nothing else. Printed here it made `swap build --json` unparseable,
+    // which only showed up without --yes, so every earlier test missed it.
+    process.stderr.write(heading('Swap offer — not yet signed') + '\n');
+    process.stderr.write(fields([
       ['you would give', describe(toTaker.amount)],
       ['you would receive', describe(toMaker.amount)],
       ['counterparty', counterparty],
@@ -404,7 +408,7 @@ export function parseAssetSpec(spec: string): Asset[] {
   const parts = spec.split(',').map((p) => p.trim()).filter((p) => p !== '');
   if (parts.length === 0) throw usageError(`empty asset specification: ${spec}`);
 
-  return parts.map((part) => {
+  const parsed = parts.map((part) => {
     const ada = /^([\d_]+(?:\.[\d]+)?)\s*ADA$/i.exec(part);
     if (ada) return { unit: LOVELACE_UNIT, quantity: adaToLovelace(ada[1]).toString() };
 
@@ -422,6 +426,16 @@ export function parseAssetSpec(spec: string): Asset[] {
     }
     return { unit, quantity: qty };
   });
+
+  // Summed by unit. `--give 5ADA,5ADA` produced an offer carrying two lovelace
+  // entries of five million each — a Value is a map keyed by unit, so that is
+  // not representable and whichever layer noticed first would either drop one
+  // silently or fail somewhere unrelated to what was typed.
+  const total = new Map<string, bigint>();
+  for (const asset of parsed) {
+    total.set(asset.unit, (total.get(asset.unit) ?? 0n) + BigInt(asset.quantity));
+  }
+  return [...total.entries()].map(([unit, quantity]) => ({ unit, quantity: quantity.toString() }));
 }
 
 /** Total every asset across a set of outputs. */

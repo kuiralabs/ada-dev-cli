@@ -121,6 +121,10 @@ describe(`contract, against a live chain (${NETWORK})`, () => {
     // recovered — demanding it up front beats failing at submission.
     const lock = ada(['contract', 'lock', '--blueprint', BLUEPRINT,
       '--amount', '5', '--datum-signer', '--datum-hash', '--yes']);
+    // Success first. Reading a field off a failed result reports
+    // `expected undefined to be 'hash'`, which says nothing about what went
+    // wrong — and on preprod what went wrong was contention, not the datum.
+    expect(lock.code ?? 'ok', lock.message ?? '').toBe('ok');
     expect(lock.datumEncoding).toBe('hash');
     // Specifically wait for the datum: the spend below cannot proceed without it,
     // and an indexer may publish the output first.
@@ -226,6 +230,41 @@ describe(`contract, against a live chain (${NETWORK})`, () => {
     expect(still.utxos.some((u: any) => u.ref === `${lock.txHash}#0`)).toBe(true);
   }, TEST_TIMEOUT);
 
+  chain()('spends by pointing at a published script rather than carrying it', async () => {
+    // `publish` existed and nothing could consume what it wrote, so the manual's
+    // whole argument for it — later transactions point at the script instead of
+    // each carrying a copy — was a claim the tool could not honour.
+    const published = ada(['contract', 'publish', '--blueprint', BLUEPRINT, '--to-self', '--yes']);
+    expect(published.code ?? 'ok', published.message ?? '').toBe('ok');
+    expect(published.referenceInput).toMatch(/^[0-9a-f]{64}#\d+$/);
+
+    // Let the publish settle before building the next transaction. Two
+    // transactions in a row select the same UTxOs, and on a chain with
+    // twenty-second blocks the second is rejected for spending what the first
+    // already took — correctly reported, and still a failed test.
+    await settle();
+
+    const lock = ada(['contract', 'lock', '--blueprint', BLUEPRINT,
+      '--amount', '6', '--datum-signer', '--yes']);
+    expect(lock.code ?? 'ok', lock.message ?? '').toBe('ok');
+    await awaitUtxo(`${lock.txHash}#0`, 'datum');
+
+    // The saving is the point, so it is measured rather than asserted in prose.
+    const carrying = ada(['contract', 'simulate', '--blueprint', BLUEPRINT,
+      '--tx-in', `${lock.txHash}#0`, '--redeemer-message', 'Hello, World!']);
+    const pointing = ada(['contract', 'simulate', '--blueprint', BLUEPRINT,
+      '--tx-in', `${lock.txHash}#0`, '--redeemer-message', 'Hello, World!',
+      '--script-ref', published.referenceInput]);
+    expect(pointing.code ?? 'ok', pointing.message ?? '').toBe('ok');
+    expect(pointing.txSizeBytes).toBeLessThan(carrying.txSizeBytes);
+
+    const spent = ada(['contract', 'unlock', '--blueprint', BLUEPRINT,
+      '--tx-in', `${lock.txHash}#0`, '--redeemer-message', 'Hello, World!',
+      '--script-ref', published.referenceInput, '--yes']);
+    expect(spent.code ?? 'ok', spent.message ?? '').toBe('ok');
+    expect(spent.txHash).toMatch(/^[0-9a-f]{64}$/);
+  }, TEST_TIMEOUT);
+
   chain()('publishes a reference script the chain records', async () => {
     const pub = ada(['contract', 'publish', '--blueprint', BLUEPRINT, '--yes']);
     expect(pub.code ?? 'ok', pub.message ?? '').toBe('ok');
@@ -246,5 +285,39 @@ describe(`contract, against a live chain (${NETWORK})`, () => {
       '--redeemer-message', 'Hello, World!']);
     expect(ambiguous.ok).toBe(false);
     for (const u of at.utxos) expect(ambiguous.hint).toContain(u.ref);
+  }, TEST_TIMEOUT);
+});
+
+describe(`reference inputs, against a live chain (${NETWORK})`, () => {
+  chain()('reads a UTxO without consuming it', async () => {
+    // CIP-31 was the one capability in the contract surface never driven end to
+    // end. The defining property is not that the spend succeeds — it is that the
+    // referenced output is still there afterwards, because a reader that
+    // consumed it would serialise everybody behind one UTxO.
+    const lock = ada(['contract', 'lock', '--blueprint', BLUEPRINT,
+      '--amount', '5', '--datum-signer', '--yes']);
+    expect(lock.code ?? 'ok', lock.message ?? '').toBe('ok');
+    await awaitUtxo(`${lock.txHash}#0`, 'datum');
+
+    const witness = ada(['contract', 'lock', '--blueprint', BLUEPRINT,
+      '--amount', '5', '--datum-signer', '--yes']);
+    expect(witness.code ?? 'ok', witness.message ?? '').toBe('ok');
+    await awaitUtxo(`${witness.txHash}#0`, 'datum');
+
+    // hello-world ignores reference inputs, so this asserts the transaction
+    // shape rather than a validator's opinion — the part that had never run.
+    const spent = ada(['contract', 'unlock', '--blueprint', BLUEPRINT,
+      '--tx-in', `${lock.txHash}#0`, '--redeemer-message', 'Hello, World!',
+      '--read-only', `${witness.txHash}#0`, '--yes']);
+    expect(spent.code ?? 'ok', spent.message ?? '').toBe('ok');
+
+    // The referenced output must survive. This is the whole point.
+    let survived = false;
+    for (let i = 0; i < CONFIRM_TRIES && !survived; i++) {
+      await settle();
+      survived = ada(['contract', 'utxos', '--blueprint', BLUEPRINT])
+        .utxos.some((u: any) => u.ref === `${witness.txHash}#0`);
+    }
+    expect(survived, 'the reference input was consumed').toBe(true);
   }, TEST_TIMEOUT);
 });

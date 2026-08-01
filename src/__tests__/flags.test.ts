@@ -76,7 +76,7 @@ describe('flags that must keep working', () => {
     ['address', 'derive', 'alice', '--index', '3', '--role', '0', '--account', '1'],
     ['hash', 'hello', '--algo', 'blake2b-224', '--hex'],
     ['localnet', 'start', '--block-time', '1'],
-    ['wallet', 'create', 'carol', '--force', '--show-mnemonic'],
+    ['wallet', 'generate', 'carol', '--force', '--show-mnemonic'],
     ['slot', '+30m', '--json'],
   ])('accepts %s %s', (...argv) => {
     expect(() => check(argv as string[])).not.toThrow();
