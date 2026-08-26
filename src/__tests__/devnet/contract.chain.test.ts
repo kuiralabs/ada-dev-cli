@@ -54,6 +54,27 @@ describe(`contract, against a live chain (${NETWORK})`, () => {
     expect(gone).toBe(true);
   }, TEST_TIMEOUT);
 
+  chain()('tolerates --signer naming the wallet\'s own key', async () => {
+    // Regression: unlock always declares the wallet's own key as a required
+    // signer, so a --signer repeating it produced a duplicate in the ledger's
+    // required-signers set — rejected at submit as a malformed transaction
+    // ("Size mismatch when decoding Record RecD"), a cryptic answer to a
+    // harmless request. The duplicate is now dropped before the build.
+    const address = ada(['wallet', 'info']).paymentAddress as string;
+    const ownHash = ada(['address', 'inspect', address]).paymentKeyHash as string;
+
+    const lock = ada(['contract', 'lock', '--blueprint', BLUEPRINT,
+      '--amount', '5', '--datum-signer', '--yes']);
+    expect(lock.code ?? 'ok', lock.message ?? '').toBe('ok');
+    await awaitUtxo(`${lock.txHash}#0`, 'datum');
+
+    const unlock = ada(['contract', 'unlock', '--blueprint', BLUEPRINT,
+      '--tx-in', `${lock.txHash}#0`, '--redeemer-message', 'Hello, World!',
+      '--signer', ownHash, '--yes']);
+    expect(unlock.code ?? 'ok', unlock.message ?? '').toBe('ok');
+    expect(unlock.txHash).toMatch(/^[0-9a-f]{64}$/);
+  }, TEST_TIMEOUT);
+
   chain()('carries state forward with a continuing output', async () => {
     // The shape `unlock` could not build at all: spend a script UTxO and produce
     // another at the same address under a new datum. Every state machine needs

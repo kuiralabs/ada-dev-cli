@@ -794,7 +794,13 @@ async function buildSpend(ctx: ActiveContext, spend: SpendContext, fee?: string)
       b.txOut(payout.address, [{ unit: LOVELACE_UNIT, quantity: payout.lovelace.toString() }]);
     }
 
-    applyExtras(b, spend.extras);
+    // A --signer naming this wallet's own key would duplicate the hash added
+    // just below, and the ledger's strict set decoder rejects the duplicate as a
+    // malformed transaction — a cryptic decode failure for a harmless request.
+    applyExtras(b, {
+      ...spend.extras,
+      signers: spend.extras.signers.filter((h) => h !== signerHash),
+    });
 
     const unsigned = await withoutCostModelNoise(() => b
       // Validators commonly check for a signature; supplying it is harmless when
