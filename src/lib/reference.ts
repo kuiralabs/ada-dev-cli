@@ -400,7 +400,7 @@ export const COMMANDS: CommandDoc[] = [
       { flag: '--valid-for <duration>', description: 'window length from the chain tip, e.g. 30m' },
       { flag: '--cross-check', description: 'ask cardano-cli for the same script hash (address)' },
       { flag: '--verify-budget', description: 'ask a node for the same execution units (simulate)' },
-      { flag: '--mint <name>:<qty>', description: 'mint in the same transaction as the spend (unlock)' },
+      { flag: '--mint <name>:<qty>', description: 'mint under this validator\'s own policy in the same transaction; a positive lock-side mint is delivered into the locked output (lock, unlock)' },
       { flag: '--mint-redeemer <json>', description: 'the mint handler\'s own redeemer' },
     ],
     examples: [
@@ -412,6 +412,7 @@ export const COMMANDS: CommandDoc[] = [
       'ada contract address',
       'ada contract address --module oneshot --validator gift_card --params \'["deadbeef"]\'',
       'ada contract lock --amount 5 --datum-signer --yes',
+      'ada contract lock --amount 2 --datum <json> --mint Beacon:1 --mint-redeemer <json> --yes',
       'ada contract unlock --redeemer-message "Hello, World!" --yes',
       'ada contract simulate --redeemer-message "Hello, World!"',
       'ada contract publish --yes',

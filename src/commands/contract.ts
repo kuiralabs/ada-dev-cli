@@ -264,22 +264,50 @@ async function lock(args: Args): Promise<void> {
   const ctx = await openActive(args);
   const loaded = open(args);
   const validator = selectValidator(loaded, selection(args));
-  const identity = scriptIdentity(loaded, validator, ctx.network.name, parseParams(flagValue(args, 'params')));
+  const scriptParams = parseParams(flagValue(args, 'params'));
+  const identity = scriptIdentity(loaded, validator, ctx.network.name, scriptParams);
 
   const amount = flagValue(args, 'amount');
   if (!amount) throw usageError('lock needs --amount <ada>', 'example: --amount 5');
   const lovelace = adaToLovelace(amount);
 
   const datum = await buildDatum(args, ctx, loaded, validator);
-  const output = { address: identity.address, amount: [{ unit: LOVELACE_UNIT, quantity: lovelace.toString() }] };
+  // A mint carried by the same transaction as the lock — the creation-side twin
+  // of `unlock --mint`. A validator that admits state only when a token is issued
+  // alongside (a discovery beacon, a state-thread token) makes the state and its
+  // marker inseparable; built separately, each transaction would fail alone. A
+  // positive mint is delivered into the locked output, where such validators
+  // require it; a negative quantity burns from the wallet as usual.
+  const mintAlong = await readMintAlong(args, loaded, validator);
+  const output = {
+    address: identity.address,
+    amount: [
+      { unit: LOVELACE_UNIT, quantity: lovelace.toString() },
+      ...(mintAlong && mintAlong.quantity > 0n
+        ? [{ unit: identity.hash + mintAlong.assetName, quantity: mintAlong.quantity.toString() }]
+        : []),
+    ],
+  };
 
   // The chain refuses an output holding less ADA than its size demands. Checking
   // here means a dry run cannot approve something the chain will reject.
   const params = await ctx.provider.fetchProtocolParameters();
   assertMeetsMinValue(output.address, output.amount, params.coinsPerUtxoSize);
 
-  const validity = await scriptlessValidity(args, ctx);
+  // With a mint, this validator's mint handler runs, so the script-only flags
+  // (--signer, --read-only) mean something; without one, refuse them by name.
+  const extras = mintAlong
+    ? await anchorValidity(readExtraFlags(args), ctx)
+    : { readOnly: [], signers: [], validity: await scriptlessValidity(args, ctx) };
   const utxos = await ctx.wallet.getUtxos();
+  const scripted = mintAlong
+    ? {
+        code: scriptBytes(validator, scriptParams),
+        collateral: pledgeCollateral(utxos, params),
+        evaluator: await makeEvaluator(ctx.provider, ctx.network),
+        costModels: (await costModelsFor(ctx.network)).models,
+      }
+    : undefined;
 
   // Inline (CIP-32) by default: the datum travels on the output, so anyone can
   // read it back. A hash-stored datum is never published — the spender must
@@ -292,12 +320,25 @@ async function lock(args: Args): Promise<void> {
   // will accept; see signAndSubmit. A Mesh builder is single-use, so a retry
   // cannot reuse the one already completed.
   const build = async (fee?: string): Promise<string> => {
-    const b = makeTxBuilder(ctx.provider); // a lock is a plain payment — no script runs
+    const b = scripted
+      ? makeTxBuilder(ctx.provider, {
+          withScripts: true, evaluator: scripted.evaluator, costModels: scripted.costModels })
+      : makeTxBuilder(ctx.provider); // a plain lock is a payment — no script runs
     if (fee) b.setFee(fee);
+    if (mintAlong && scripted) {
+      b.mintPlutusScript(identity.version)
+        .mint(mintAlong.quantity.toString(), identity.hash, mintAlong.assetName)
+        .mintingScript(scripted.code)
+        .mintRedeemerValue(mintAlong.redeemer as never);
+    }
     b.txOut(output.address, output.amount);
     if (asHash) b.txOutDatumHashValue(datum.value as never);
     else b.txOutInlineDatumValue(datum.value as never);
-    applyExtras(b, { readOnly: [], signers: [], validity });
+    applyExtras(b, extras);
+    if (scripted) {
+      b.txInCollateral(scripted.collateral.input.txHash, scripted.collateral.input.outputIndex,
+                       scripted.collateral.output.amount, scripted.collateral.output.address);
+    }
 
     return withoutCostModelNoise(() => b
       .changeAddress(ctx.payment)
@@ -310,7 +351,8 @@ async function lock(args: Args): Promise<void> {
     unsigned = await build();
   } catch (err) {
     throw translateBuildFailure(err, {
-      what: `lock ${formatAda(lovelace)} ADA at ${identity.address}`,
+      what: `lock ${formatAda(lovelace)} ADA at ${identity.address}`
+        + (mintAlong ? ` minting ${mintAlong.describe}` : ''),
       minValueHint: 'a script output must still hold the minimum ADA its size demands',
     });
   }
@@ -324,7 +366,8 @@ async function lock(args: Args): Promise<void> {
       scriptAddress: identity.address, scriptHash: identity.hash,
       ada: formatAda(lovelace), lovelace: lovelace.toString(),
       datum: datum.describe, datumEncoding: asHash ? 'hash' : 'inline',
-      ...(describeWindow(validity) ? { validity: describeWindow(validity) } : {}),
+      ...(mintAlong ? { minted: mintAlong.describe, policyId: identity.hash } : {}),
+      ...(describeWindow(extras.validity) ? { validity: describeWindow(extras.validity) } : {}),
       submitted, ...(txHash ? { txHash } : {}),
     });
     return;
@@ -338,6 +381,7 @@ async function lock(args: Args): Promise<void> {
     ['amount', `${formatAda(lovelace)} ADA`],
     ['datum', datum.describe],
     ['encoding', asHash ? 'hash — keep the datum, the chain will not store it' : 'inline'],
+    ...(mintAlong ? [['minted', mintAlong.describe] as [string, string]] : []),
   ]) + '\n');
   if (!submitted) {
     process.stderr.write('\n' + dim('  Nothing submitted. Add --yes to send it.') + '\n');

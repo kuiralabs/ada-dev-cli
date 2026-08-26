@@ -578,6 +578,8 @@ export const TOOLS: ToolDef[] = [
         datumSigner: { type: 'boolean', description: 'Datum holding this wallet\'s own public key hash. The common case.' },
         datum: { type: 'string', description: 'Datum as Plutus data JSON, for anything else.' },
         datumHash: { type: 'boolean', description: 'Store only the datum hash rather than inline. The datum is then NOT recoverable from the chain and must be kept to spend the output.' },
+        mint: { type: 'string', description: 'Mint under this validator\'s own policy in the same transaction, as <name>:<qty>; negative burns. A positive mint is delivered into the locked output — the beacon / state-thread-token pattern.' },
+        mintRedeemer: { type: 'string', description: 'Plutus data JSON for the mint handler\'s own redeemer. Required with mint.' },
         blueprint: { type: 'string' },
         module: { type: 'string' },
         validator: { type: 'string' },
@@ -594,12 +596,17 @@ export const TOOLS: ToolDef[] = [
       if (i.datumHash) argv.push('--datum-hash');
       const d = str(i.datum);
       if (d) argv.push('--datum', d);
+      const m = str(i.mint);
+      if (m) argv.push('--mint', m);
+      const mr = str(i.mintRedeemer);
+      if (mr) argv.push('--mint-redeemer', mr);
       const w = str(i.wallet);
       return withNetwork(i, w ? [...argv, '--wallet', w] : argv);
     },
     describeForConsent: (i) =>
-      `Lock ${String(i.ada)} ADA at a script address from wallet "${str(i.wallet) ?? 'the active wallet'}". `
-      + 'It becomes spendable only by a transaction the validator approves. If the datum is wrong, '
+      `Lock ${String(i.ada)} ADA at a script address from wallet "${str(i.wallet) ?? 'the active wallet'}"`
+      + (str(i.mint) ? `, minting ${str(i.mint)} under the validator's own policy in the same transaction` : '')
+      + '. It becomes spendable only by a transaction the validator approves. If the datum is wrong, '
       + 'or nobody can satisfy the validator, the funds are unrecoverable.',
   },
   {

@@ -52,6 +52,34 @@ describe('lock refuses to guess', () => {
   });
 });
 
+describe('lock --mint, the creation-side twin of unlock --mint', () => {
+  const bp = 'src/__tests__/fixtures';
+
+  // Regression: before lock understood --mint, the flag was accepted and
+  // silently ignored — a lock the user asked to carry a beacon was built
+  // without one. Silently dropping a typed flag is exactly the failure
+  // scriptlessValidity refuses for --signer/--read-only.
+  it('rejects a malformed --mint spec instead of ignoring it', async () => {
+    await expect(run(['lock', '--amount', '5', '--datum-signer', '--mint', 'NoColon',
+      '--blueprint', bp]))
+      .rejects.toThrow(/--mint expects <name>:<quantity>/);
+  });
+
+  it('requires the mint handler\'s own redeemer', async () => {
+    await expect(run(['lock', '--amount', '5', '--datum-signer', '--mint', 'Badge:1',
+      '--blueprint', bp]))
+      .rejects.toThrow(/needs --mint-redeemer/);
+  });
+
+  it('names the missing mint handler when the validator has none', async () => {
+    // hello_world declares spend + else only, so a lock-side mint under its
+    // policy is impossible — say so rather than failing on-chain.
+    await expect(run(['lock', '--amount', '5', '--datum-signer', '--mint', 'Badge:1',
+      '--mint-redeemer', '[]', '--blueprint', bp]))
+      .rejects.toThrow(/mint/);
+  });
+});
+
 describe('unlock refuses to guess', () => {
   const bp = 'src/__tests__/fixtures';
 
@@ -154,6 +182,20 @@ describe('the agent surface covers every contract subcommand', () => {
     const text = byName('ada_contract_lock')!.describeForConsent!({ ada: '5', wallet: 'bob' });
     expect(text).toContain('bob');
     expect(text).toContain('5');
+  });
+
+  it('forwards mint flags to the lock command', () => {
+    const argv = byName('ada_contract_lock')!.toArgv!(
+      { ada: '2', mint: 'Beacon:1', mintRedeemer: '[]' });
+    expect(argv).toContain('--mint');
+    expect(argv).toContain('Beacon:1');
+    expect(argv).toContain('--mint-redeemer');
+  });
+
+  it('discloses a lock-side mint in the consent description', () => {
+    const text = byName('ada_contract_lock')!.describeForConsent!(
+      { ada: '2', mint: 'Beacon:1' });
+    expect(text).toMatch(/minting Beacon:1/);
   });
 
   it('warns that locked funds can be unrecoverable', () => {
