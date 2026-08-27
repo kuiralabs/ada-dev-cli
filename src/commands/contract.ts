@@ -464,9 +464,13 @@ interface MintAlong {
 interface SpendContext {
   identity: ScriptIdentity;
   code: string;
-  target: UTxO;
+  /**
+   * The script UTxOs being spent. Several is the batch case: one transaction,
+   * one fee, and — where the validator allows it — one atomic outcome instead of
+   * a race between separate transactions.
+   */
+  targets: Target[];
   redeemer: { value: unknown; describe: string };
-  datumMode: { inline: boolean; value?: unknown };
   collateral: UTxO;
   utxos: UTxO[];
   protocol: Awaited<ReturnType<Provider['fetchProtocolParameters']>>;
@@ -482,6 +486,13 @@ interface SpendContext {
   /** Outputs to third parties: refunds, payouts, fee splits. */
   payouts: Payout[];
   extras: TxExtras;
+}
+
+/** One script UTxO to spend, with the datum it must be handed back. */
+interface Target {
+  utxo: UTxO;
+  /** How its datum was stored, which decides how it is supplied. */
+  datumMode: { inline: boolean; value?: unknown };
 }
 
 /**
@@ -640,13 +651,15 @@ async function prepareSpend(args: Args, ctx: ActiveContext): Promise<SpendContex
   const carryOn = readCarryOn(args, loaded, validator);
   const payouts = [...readPayouts(args), ...readPayoutsJson(args)];
   const scriptRef = readScriptRef(args);
+  const wanted = readTargetRefs(args);
 
-  const target = await resolveScriptUtxo(args, ctx, identity.address);
+  const chosen = await resolveScriptUtxos(wanted, ctx, identity.address);
 
   // How the datum is stored decides how it must be supplied back. An inline datum
   // (CIP-32) travels on the output and the builder just points at it; a datum
   // stored as a hash was never published, so the spender must already hold it.
-  const datumMode = datumModeOf(target, flagValue(args, 'datum'));
+  const supplied = flagValue(args, 'datum');
+  const targets: Target[] = chosen.map((utxo) => ({ utxo, datumMode: datumModeOf(utxo, supplied) }));
 
   const utxos = await ctx.wallet.getUtxos();
   const protocol = await ctx.provider.fetchProtocolParameters();
@@ -657,7 +670,7 @@ async function prepareSpend(args: Args, ctx: ActiveContext): Promise<SpendContex
   const mintAlong = await readMintAlong(args, loaded, validator);
 
   return {
-    identity, code, target, redeemer, datumMode, collateral, utxos, protocol,
+    identity, code, targets, redeemer, collateral, utxos, protocol,
     evaluator, costModels, mintAlong, carryOn, payouts, scriptRef, extras,
   };
 }
@@ -871,27 +884,32 @@ async function buildSpend(ctx: ActiveContext, spend: SpendContext, fee?: string)
     // signAndSubmit: the builder cannot know what the change output will finally
     // hold, so a transaction whose change carries native assets is under-priced.
     if (fee) b.setFee(fee);
-    b
-      .spendingPlutusScript(spend.identity.version)
-      .txIn(spend.target.input.txHash, spend.target.input.outputIndex,
-            spend.target.output.amount, spend.target.output.address)
-      .txInRedeemerValue(spend.redeemer.value as never);
+    // Each script input is its own complete block: the ledger asks for a
+    // redeemer per input, not per transaction, and the builder is positional —
+    // whatever follows a txIn belongs to it.
+    for (const { utxo, datumMode } of spend.targets) {
+      b
+        .spendingPlutusScript(spend.identity.version)
+        .txIn(utxo.input.txHash, utxo.input.outputIndex,
+              utxo.output.amount, utxo.output.address)
+        .txInRedeemerValue(spend.redeemer.value as never);
 
-    // Point at a published copy, or carry the bytes. `publish` existed and
-    // nothing could consume what it wrote, so the manual's whole argument for
-    // it — later transactions point at the script instead of each carrying a
-    // copy — was a claim the tool could not honour.
-    if (spend.scriptRef) {
-      b.spendingTxInReference(
-        spend.scriptRef.txHash, spend.scriptRef.index,
-        String(Math.ceil(spend.code.length / 2)), spend.identity.hash,
-      );
-    } else {
-      b.txInScript(spend.code);
+      // Point at a published copy, or carry the bytes. `publish` existed and
+      // nothing could consume what it wrote, so the manual's whole argument for
+      // it — later transactions point at the script instead of each carrying a
+      // copy — was a claim the tool could not honour.
+      if (spend.scriptRef) {
+        b.spendingTxInReference(
+          spend.scriptRef.txHash, spend.scriptRef.index,
+          String(Math.ceil(spend.code.length / 2)), spend.identity.hash,
+        );
+      } else {
+        b.txInScript(spend.code);
+      }
+
+      if (datumMode.inline) b.txInInlineDatumPresent();
+      else b.txInDatumValue(datumMode.value as never);
     }
-
-    if (spend.datumMode.inline) b.txInInlineDatumPresent();
-    else b.txInDatumValue(spend.datumMode.value as never);
 
     // The mint rides along in the same transaction, under this validator's own
     // policy — which for a script is simply its hash.
@@ -969,14 +987,18 @@ function pledgeCollateral(
 async function unlock(args: Args): Promise<void> {
   const ctx = await openActive(args);
   const spend = await prepareSpend(args, ctx);
-  const { identity, target, redeemer, datumMode, collateral } = spend;
+  const { identity, targets, redeemer, collateral } = spend;
   const unsigned = await buildSpend(ctx, spend);
 
   const submitted = hasFlag(args, 'yes');
   const txHash = submitted
     ? await signAndSubmit(ctx, unsigned, (fee) => buildSpend(ctx, spend, fee))
     : null;
-  const recovered = target.output.amount.find((a) => a.unit === LOVELACE_UNIT)?.quantity ?? '0';
+  // Across every input: a batch recovers what all of them held, and reporting
+  // only the first would understate it by the rest.
+  const recovered = targets
+    .reduce((total, t) => total + BigInt(t.utxo.output.amount.find((a) => a.unit === LOVELACE_UNIT)?.quantity ?? '0'), 0n)
+    .toString();
   // Money leaving for a third party was never reported, so a caller could not
   // tell what a --pay actually sent — least of all the ADA the ledger attaches.
   const paying = payoutOutputs(spend.payouts, spend.protocol.coinsPerUtxoSize);
@@ -985,10 +1007,10 @@ async function unlock(args: Args): Promise<void> {
     writeJson({
       network: ctx.network.name, wallet: ctx.stored.name,
       scriptAddress: identity.address, scriptHash: identity.hash,
-      spending: refOf(target),
+      spending: targets.map((t) => refOf(t.utxo)),
       ada: formatAda(BigInt(recovered)), lovelace: recovered,
       redeemer: redeemer.describe,
-      datumEncoding: datumMode.inline ? 'inline' : 'hash',
+      datumEncoding: targets.every((t) => t.datumMode.inline) ? 'inline' : 'hash',
       // The window was resolved against the chain tip, so the caller does not
       // otherwise know which slots "30m" became.
       ...(describeWindow(spend.extras.validity) ? { validity: describeWindow(spend.extras.validity) } : {}),
@@ -1012,7 +1034,7 @@ async function unlock(args: Args): Promise<void> {
   process.stderr.write(fields([
     ['network', ctx.network.name],
     ['to', ctx.stored.name],
-    ['spending', shortRef(target)],
+    ...targets.map((t) => ['spending', shortRef(t.utxo)] as [string, string]),
     ['amount', formatAda(BigInt(recovered))],
     ['redeemer', redeemer.describe],
     ['collateral', shortRef(collateral)],
@@ -1029,27 +1051,55 @@ async function unlock(args: Args): Promise<void> {
 }
 
 /** Which UTxO at the script address to spend. */
-async function resolveScriptUtxo(args: Args, ctx: ActiveContext, scriptAddress: string): Promise<UTxO> {
+/**
+ * Which script UTxOs `--tx-in` names, read without asking a chain anything.
+ *
+ * Comma-separated, like every other list this CLI takes: several UTxOs in one
+ * transaction is the batch case, and whether the validator permits it is the
+ * validator's business — it will say so by refusing to build. Whether the list
+ * is well formed is knowable here, and the file already learned once that
+ * checking below the network call blames the wrong flag.
+ */
+function readTargetRefs(args: Args): string[] | undefined {
+  const raw = flagValue(args, 'tx-in');
+  if (!raw) return undefined;
+  const refs = raw.split(',').map((r) => r.trim()).filter((r) => r !== '');
+  if (refs.length === 0) throw usageError('--tx-in names no UTxO');
+  const seen = new Set<string>();
+  for (const ref of refs) {
+    if (seen.has(ref)) {
+      throw usageError(`--tx-in names ${ref} twice`,
+        'a transaction cannot spend the same output more than once');
+    }
+    seen.add(ref);
+  }
+  return refs;
+}
+
+async function resolveScriptUtxos(
+  refs: string[] | undefined, ctx: ActiveContext, scriptAddress: string,
+): Promise<UTxO[]> {
   const at = await ctx.provider.fetchAddressUTxOs(scriptAddress);
   if (at.length === 0) {
     throw new AdaError('nothing_locked', `no UTxO at ${scriptAddress}`, EXIT_CHAIN_REJECTED,
       'lock funds there first: ada contract lock --amount 5 --datum-signer --yes');
   }
 
-  const ref = flagValue(args, 'tx-in');
-  if (!ref) {
+  if (!refs) {
     if (at.length > 1) {
       throw usageError(`${at.length} UTxOs sit at the script address`,
         `choose one with --tx-in <hash>#<index>: ${at.map(refOf).join(', ')}`);
     }
-    return at[0];
+    return [at[0]];
   }
 
-  const found = at.find((u) => refOf(u) === ref);
-  if (!found) {
-    throw usageError(`${ref} is not at the script address`, `available: ${at.map(refOf).join(', ')}`);
-  }
-  return found;
+  return refs.map((ref) => {
+    const found = at.find((u) => refOf(u) === ref);
+    if (!found) {
+      throw usageError(`${ref} is not at the script address`, `available: ${at.map(refOf).join(', ')}`);
+    }
+    return found;
+  });
 }
 
 const refOf = (u: UTxO): string => `${u.input.txHash}#${u.input.outputIndex}`;
@@ -1304,7 +1354,7 @@ async function utxos(args: Args): Promise<void> {
 async function simulate(args: Args): Promise<void> {
   const ctx = await openActive(args);
   const spend = await prepareSpend(args, ctx);
-  const { identity, target, protocol, evaluator } = spend;
+  const { identity, targets, protocol, evaluator } = spend;
   // The very same transaction `unlock` would submit — that is what makes the
   // number below an answer about unlock rather than about something adjacent.
   const unsigned = await buildSpend(ctx, spend);
@@ -1360,7 +1410,7 @@ async function simulate(args: Args): Promise<void> {
     writeJson({
       network: ctx.network.name,
       scriptAddress: identity.address,
-      spending: refOf(target),
+      spending: targets.map((t) => refOf(t.utxo)),
       redeemers: actions,
       executionUnits: { mem: used.mem, steps: used.steps },
       declaredExecutionUnits: { mem: declared.mem, steps: declared.steps },
@@ -1378,7 +1428,7 @@ async function simulate(args: Args): Promise<void> {
 
   process.stdout.write(heading('Simulation') + '\n');
   process.stdout.write(fields([
-    ['spending', refOf(target)],
+    ...targets.map((t) => ['spending', refOf(t.utxo)] as [string, string]),
     ['memory', `${used.mem.toLocaleString()} / ${maxMem.toLocaleString()}  (${pct(used.mem, maxMem)}%)`],
     ['steps', `${used.steps.toLocaleString()} / ${maxSteps.toLocaleString()}  (${pct(used.steps, maxSteps)}%)`],
     ['declared', `${declared.mem.toLocaleString()} mem, ${declared.steps.toLocaleString()} steps`],

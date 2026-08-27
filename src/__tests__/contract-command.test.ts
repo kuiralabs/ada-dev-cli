@@ -498,3 +498,20 @@ describe('--payouts says what a colon spec cannot', () => {
     expect(tagged.adaAttached).toBeGreaterThan(plain.adaAttached);
   });
 });
+
+describe('--tx-in spends several script UTxOs in one transaction', () => {
+  const bp = 'src/__tests__/fixtures';
+  const A = 'aa'.repeat(32);
+
+  // One transaction, one fee, one atomic outcome — instead of a race between
+  // separate transactions that a competitor can win halfway through.
+  it('refuses to spend the same output twice', async () => {
+    await expect(run(['unlock', '--redeemer-message', 'x', '--tx-in', `${A}#0,${A}#0`, '--blueprint', bp]))
+      .rejects.toThrow(/names .* twice/);
+  });
+
+  it('refuses an empty list rather than silently spending whatever is there', async () => {
+    await expect(run(['unlock', '--redeemer-message', 'x', '--tx-in', ',', '--blueprint', bp]))
+      .rejects.toThrow(/names no UTxO/);
+  });
+});

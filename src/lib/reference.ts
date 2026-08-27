@@ -388,7 +388,7 @@ export const COMMANDS: CommandDoc[] = [
       { flag: '--datum-hash', description: 'store only the datum hash rather than inline (lock)' },
       { flag: '--redeemer-message <text>', description: 'redeemer of one text field (unlock)' },
       { flag: '--redeemer <json>', description: 'redeemer as Plutus data JSON (unlock)' },
-      { flag: '--tx-in <hash>#<ix>', description: 'which script UTxO to spend when several exist' },
+      { flag: '--tx-in <hash>#<ix>', description: 'which script UTxO to spend when several exist; comma-separate to spend several in one transaction, which share the redeemer' },
       { flag: '--name <text>', description: 'asset name (mint)' },
       { flag: '--qty <n>', description: 'quantity; negative burns (mint)' },
       { flag: '--spend <hash>#<ix>', description: 'UTxO the policy requires be consumed (mint)' },
