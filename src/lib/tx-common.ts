@@ -125,11 +125,17 @@ export function assertMeetsMinValue(
  * out of the giver's pocket, so both sides need to see it. Someone offering "20
  * Silk" is really offering 20 Silk plus roughly one ADA, and hiding that would
  * make the offer a lie by omission.
+ *
+ * `inlineDatum` is the datum the output will carry, if any. It is not decoration:
+ * the minimum depends on the serialized size of the whole output, so an output
+ * with a datum needs more ADA than the same output without one. Leaving it out of
+ * the estimate produces a number the ledger then refuses.
  */
 export function withMinValue(
   address: string,
   amount: ReadonlyArray<{ unit: string; quantity: string }>,
   coinsPerUtxoSize: number,
+  inlineDatum?: unknown,
 ): { amount: Array<{ unit: string; quantity: string }>; adaAttached: bigint } {
   const present = amount
     .filter((a) => a.unit === LOVELACE_UNIT || a.unit === '')
@@ -140,7 +146,10 @@ export function withMinValue(
   // serializes smaller than a real one.
   const others = amount.filter((a) => a.unit !== LOVELACE_UNIT && a.unit !== '');
   const probe = [{ unit: LOVELACE_UNIT, quantity: '1000000' }, ...others];
-  const required = getOutputMinLovelace({ address, amount: probe }, coinsPerUtxoSize);
+  const carries = inlineDatum !== undefined
+    ? { datum: { type: 'Inline' as const, data: { type: 'Mesh' as const, content: inlineDatum as never } } }
+    : {};
+  const required = getOutputMinLovelace({ address, amount: probe, ...carries }, coinsPerUtxoSize);
 
   if (present >= required) {
     return { amount: [...amount], adaAttached: 0n };

@@ -508,6 +508,14 @@ export interface Payout {
   lovelace: bigint;
   /** Native assets paid alongside, for a validator that wants something other than ADA. */
   assets: Array<{ unit: string; quantity: bigint }>;
+  /**
+   * An inline datum on the payout, in Mesh's Plutus-data JSON.
+   *
+   * A validator that is satisfied by "someone was paid" cannot tell two claims
+   * apart when one transaction settles both — one output looks like payment for
+   * each of them. A datum on the output says which claim it answers for.
+   */
+  datum?: unknown;
 }
 
 /**
@@ -630,7 +638,7 @@ async function prepareSpend(args: Args, ctx: ActiveContext): Promise<SpendContex
   // reported the wrong problem — a fake --tx-in was blamed for a missing
   // --continue-datum, because the network call happened first.
   const carryOn = readCarryOn(args, loaded, validator);
-  const payouts = readPayouts(args);
+  const payouts = [...readPayouts(args), ...readPayoutsJson(args)];
   const scriptRef = readScriptRef(args);
 
   const target = await resolveScriptUtxo(args, ctx, identity.address);
@@ -756,12 +764,64 @@ function readPayouts(args: Args): Payout[] {
   });
 }
 
+/**
+ * The general payout form, for what a colon spec cannot express.
+ *
+ * Kept as a second flag rather than more colons, mirroring --datum beside
+ * --datum-signer: the short form for the common case, the full one when the
+ * shape demands it. Entries are appended to any --pay ones.
+ */
+function readPayoutsJson(args: Args): Payout[] {
+  const raw = flagValue(args, 'payouts');
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw usageError('--payouts must be JSON',
+      'an array, for example: --payouts \'[{"address":"addr_test1...","ada":"1.5"}]\'');
+  }
+  if (!Array.isArray(parsed)) {
+    throw usageError('--payouts must be a JSON array of payouts', 'wrap a single payout in [ ]');
+  }
+  return parsed.map((entry, i) => {
+    const where = `--payouts[${i}]`;
+    if (typeof entry !== 'object' || entry === null) throw usageError(`${where} is not an object`);
+    const { address, ada, assets, datum } = entry as Record<string, unknown>;
+    if (typeof address !== 'string') throw usageError(`${where} needs an "address"`);
+    assertRecipient(address, { what: `${where}: not a Cardano address` });
+    if (ada !== undefined && typeof ada !== 'string' && typeof ada !== 'number') {
+      throw usageError(`${where}.ada must be a number or a string of ADA`);
+    }
+    const list = assets === undefined ? [] : assets;
+    if (!Array.isArray(list)) throw usageError(`${where}.assets must be an array`);
+    // Through the same parser the colon form uses, so a unit that is valid in one
+    // shape cannot be invalid in the other.
+    const parsedAssets = list.map((a, j) => {
+      if (typeof a !== 'object' || a === null) throw usageError(`${where}.assets[${j}] is not an object`);
+      const { unit, quantity } = a as Record<string, unknown>;
+      if (typeof unit !== 'string') throw usageError(`${where}.assets[${j}] needs a "unit"`);
+      return parseAssetPair(`${unit}:${String(quantity)}`);
+    });
+    if (ada === undefined && parsedAssets.length === 0) {
+      throw usageError(`${where} pays nothing`, 'give "ada", "assets", or both');
+    }
+    return {
+      address,
+      lovelace: ada === undefined ? 0n : adaToLovelace(String(ada)),
+      assets: parsedAssets,
+      ...(datum !== undefined ? { datum } : {}),
+    };
+  });
+}
+
 /** A payout as the ledger will see it, and whatever the ledger itself added. */
 export interface PayoutOutput {
   address: string;
   amount: Array<{ unit: string; quantity: string }>;
   /** ADA attached to satisfy min-UTxO, out of the payer's own pocket. */
   adaAttached: bigint;
+  datum?: unknown;
 }
 
 /**
@@ -776,12 +836,17 @@ export interface PayoutOutput {
  */
 export function payoutOutputs(payouts: readonly Payout[], coinsPerUtxoSize: number): PayoutOutput[] {
   return payouts.map((payout) => {
+    const carries = payout.datum !== undefined ? { datum: payout.datum } : {};
     const lovelace = { unit: LOVELACE_UNIT, quantity: payout.lovelace.toString() };
     if (payout.assets.length === 0) {
-      return { address: payout.address, amount: [lovelace], adaAttached: 0n };
+      return { address: payout.address, amount: [lovelace], adaAttached: 0n, ...carries };
     }
     const requested = [lovelace, ...payout.assets.map((a) => ({ unit: a.unit, quantity: a.quantity.toString() }))];
-    return { address: payout.address, ...withMinValue(payout.address, requested, coinsPerUtxoSize) };
+    return {
+      address: payout.address,
+      ...withMinValue(payout.address, requested, coinsPerUtxoSize, payout.datum),
+      ...carries,
+    };
   });
 }
 
@@ -791,7 +856,10 @@ function describePayout(p: PayoutOutput): string {
     .map((a) => (a.unit === LOVELACE_UNIT ? formatAda(BigInt(a.quantity)) : `${a.quantity} ${formatAsset(a.unit)}`))
     .join(' + ');
   const added = p.adaAttached > 0n ? ` (includes ${formatAda(p.adaAttached)} the ledger requires for a token output)` : '';
-  return `${value} to ${p.address}${added}`;
+  // The datum is what tells a validator which claim this payment settles, so a
+  // caller checking a dry run needs to see that it is there.
+  const tagged = p.datum !== undefined ? ', carrying an inline datum' : '';
+  return `${value} to ${p.address}${added}${tagged}`;
 }
 
 /** Build the spending transaction. One definition, two callers. */
@@ -842,8 +910,9 @@ async function buildSpend(ctx: ActiveContext, spend: SpendContext, fee?: string)
         .txOutInlineDatumValue(spend.carryOn.datum as never);
     }
 
-    for (const { address, amount } of payoutOutputs(spend.payouts, spend.protocol.coinsPerUtxoSize)) {
+    for (const { address, amount, datum } of payoutOutputs(spend.payouts, spend.protocol.coinsPerUtxoSize)) {
       b.txOut(address, amount);
+      if (datum !== undefined) b.txOutInlineDatumValue(datum as never);
     }
 
     // A --signer naming this wallet's own key would duplicate the hash added

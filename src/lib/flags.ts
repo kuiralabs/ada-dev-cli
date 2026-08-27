@@ -62,7 +62,7 @@ const COMMAND_FLAGS: Readonly<Record<string, readonly string[]>> = {
   dev: ['blueprint', 'module', 'validator', 'params', 'path'],
   contract: [
     'amount', 'blueprint', 'continue', 'continue-datum', 'cross-check', 'datum', 'datum-hash', 'datum-signer',
-    'mint', 'mint-redeemer', 'module', 'name', 'params', 'path', 'pay', 'qty', 'read-only',
+    'mint', 'mint-redeemer', 'module', 'name', 'params', 'path', 'pay', 'payouts', 'qty', 'read-only',
     'redeemer', 'redeemer-message', 'script-ref', 'signer', 'spend', 'to-self', 'tx-in',
     'valid-for', 'valid-from', 'valid-until', 'validator', 'verify-budget', 'yes',
   ],

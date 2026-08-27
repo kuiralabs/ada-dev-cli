@@ -450,3 +450,51 @@ describe('what a payout output actually holds', () => {
     expect(out.adaAttached).toBe(attached);
   });
 });
+
+describe('--payouts says what a colon spec cannot', () => {
+  const bp = 'src/__tests__/fixtures';
+  const ADDR = 'addr_test1qpf8cud6excflj787pgkfe0vlkpj5x7tz2fgsdtak69033dmha29vf5ajuhcslaaru44844juzssnkds30r300zwee4qkdrx2v';
+  const FOO = '2b0f0c0a61f4525664aa2478e78358d67d783c58607e67540c521fe5464f4f';
+  const COINS_PER_UTXO_SIZE = 4310;
+  const pay = (json: unknown) =>
+    run(['unlock', '--redeemer-message', 'x', '--payouts', JSON.stringify(json), '--blueprint', bp]);
+
+  it('refuses anything that is not a JSON array', async () => {
+    await expect(pay({ address: ADDR, ada: '1' })).rejects.toThrow(/array of payouts/);
+    await expect(run(['unlock', '--redeemer-message', 'x', '--payouts', 'not json', '--blueprint', bp]))
+      .rejects.toThrow(/must be JSON/);
+  });
+
+  it('names which entry is wrong, not just that something is', async () => {
+    await expect(pay([{ address: ADDR, ada: '1' }, { ada: '2' }])).rejects.toThrow(/--payouts\[1\] needs an "address"/);
+  });
+
+  it('refuses a payout that pays nothing', async () => {
+    await expect(pay([{ address: ADDR }])).rejects.toThrow(/pays nothing/);
+  });
+
+  it('validates assets through the same parser the colon form uses', async () => {
+    await expect(pay([{ address: ADDR, assets: [{ unit: FOO, quantity: '0' }] }]))
+      .rejects.toThrow(/greater than zero/);
+  });
+
+  // The reason --payouts exists: a validator settling two claims in one
+  // transaction cannot tell which payment answers for which without this.
+  it('carries an inline datum onto the output, and pays for its size', () => {
+    // Mesh's own Plutus-data JSON, the form every datum in this CLI takes: a
+    // bytearray is a hex string and an integer is a number, not {bytes}/{int}.
+    const tag = { alternative: 0, fields: ['aa'.repeat(32), 0] };
+    const [plain] = payoutOutputs(
+      [{ address: ADDR, lovelace: 0n, assets: [{ unit: FOO, quantity: 50n }] }],
+      COINS_PER_UTXO_SIZE,
+    );
+    const [tagged] = payoutOutputs(
+      [{ address: ADDR, lovelace: 0n, assets: [{ unit: FOO, quantity: 50n }], datum: tag }],
+      COINS_PER_UTXO_SIZE,
+    );
+    expect(tagged.datum).toEqual(tag);
+    // A bigger output has a higher floor. Estimating without the datum would
+    // build a transaction the ledger then refuses.
+    expect(tagged.adaAttached).toBeGreaterThan(plain.adaAttached);
+  });
+});
