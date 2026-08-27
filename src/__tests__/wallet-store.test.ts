@@ -48,21 +48,38 @@ describe('names are constrained because they become filenames', () => {
   });
 });
 
-describe('mainnet is refused, not merely discouraged', () => {
-  it('throws for mainnet with an explanation', () => {
+describe('mainnet refuses a READABLE key, not mainnet as such', () => {
+  const wallet = (sealed?: object): StoredWallet => ({
+    name: 'w', mnemonic: sealed ? '' : Array(24).fill('test').join(' '),
+    ...(sealed ? { sealed: sealed as never } : {}),
+    addresses: {}, stakeAddresses: {}, accountIndex: 0, createdAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  it('throws for a plaintext wallet on mainnet, and says how to proceed', () => {
     try {
-      assertNotMainnet('mainnet');
+      assertNotMainnet('mainnet', wallet());
       throw new Error('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(AdaError);
       expect((err as AdaError).code).toBe('mainnet_refused');
-      expect((err as AdaError).hint).toContain('unencrypted');
+      expect((err as AdaError).hint).toContain('encrypt');
     }
   });
 
-  it('allows every test network', () => {
+  it('throws for mainnet when no wallet is offered at all', () => {
+    expect(() => assertNotMainnet('mainnet')).toThrowError(AdaError);
+  });
+
+  // The rule was never about mainnet: it was about the phrase being readable.
+  // So it lifts exactly when the phrase stops being readable, and not before.
+  it('allows an ENCRYPTED wallet on mainnet', () => {
+    expect(() => assertNotMainnet('mainnet', wallet({ kdf: 'scrypt' }))).not.toThrow();
+  });
+
+  it('allows every test network, encrypted or not', () => {
     for (const n of ['devnet', 'preprod', 'preview'] as const) {
       expect(() => assertNotMainnet(n)).not.toThrow();
+      expect(() => assertNotMainnet(n, wallet())).not.toThrow();
     }
   });
 });
@@ -162,5 +179,31 @@ describe('removal', () => {
 
   it('fails rather than silently succeeding for a missing wallet', () => {
     expect(() => removeWallet('nobody')).toThrowError(AdaError);
+  });
+});
+
+describe('an encrypted wallet survives the round trip to disk', () => {
+  // This was broken and the unit tests could not see it: the keystore was
+  // correct, and the store dropped the wallet on the way back in because the
+  // half-written-file guard demanded a readable phrase.
+  const sealed = {
+    kdf: 'scrypt' as const, n: 16384, r: 8, p: 1, cipher: 'aes-256-gcm' as const,
+    salt: 'aa'.repeat(16), iv: 'bb'.repeat(12), tag: 'cc'.repeat(16), ciphertext: 'dd'.repeat(40),
+  };
+
+  it('loads a wallet that has no readable phrase', () => {
+    saveWallet({
+      name: 'sealed-one', mnemonic: '', sealed,
+      addresses: {}, stakeAddresses: {}, accountIndex: 0, createdAt: '2026-01-01T00:00:00.000Z',
+    });
+    const back = loadWallet('sealed-one');
+    expect(back.sealed).toEqual(sealed);
+    expect(back.mnemonic).toBe('');
+  });
+
+  it('still refuses a file with neither a phrase nor a seal', () => {
+    mkdirSync(walletsDir(), { recursive: true });
+    writeFileSync(join(walletsDir(), 'empty.json'), JSON.stringify({ name: 'empty' }));
+    expect(() => loadWallet('empty')).toThrowError(AdaError);
   });
 });

@@ -11,9 +11,11 @@
 //   - mnemonics are never printed unless explicitly asked for
 //   - **mainnet is refused outright** — see assertNotMainnet
 //
-// If encryption is wanted later, the passphrase must arrive by environment
-// variable rather than argument, because command lines appear in shell history
-// and in process listings.
+// Encryption is now available and works exactly that way — see lib/keystore.ts.
+// `ada wallet encrypt <name>` seals the phrase with a passphrase read from
+// ADA_WALLET_PASSPHRASE. An encrypted wallet is the only kind allowed on
+// mainnet: the refusal below exists because the phrase is readable, so it lifts
+// precisely when it no longer is.
 
 import { homedir } from 'node:os';
 import { writeFileAtomic } from './atomic-write.ts';
@@ -23,6 +25,7 @@ import {
   renameSync, unlinkSync, readdirSync,
 } from 'node:fs';
 import { usageError, configError, AdaError } from './errors.ts';
+import { open as openSealed, passphraseFromEnv, type SealedSecret } from './keystore.ts';
 import { EXIT_INVALID_ARGS } from './exit-codes.ts';
 import type { NetworkName } from './cli-config.ts';
 
@@ -35,8 +38,15 @@ const NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
 
 export interface StoredWallet {
   name: string;
-  /** BIP-39 recovery phrase. Plaintext — see the file header. */
+  /**
+   * BIP-39 recovery phrase.
+   *
+   * Plaintext unless {@link StoredWallet.sealed} is present, in which case this
+   * holds the phrase only in memory after being opened, and never on disk.
+   */
   mnemonic: string;
+  /** Set when the phrase is encrypted at rest. Mutually exclusive with a stored `mnemonic`. */
+  sealed?: SealedSecret;
   /** Payment address per network, cached so `wallet list` needs no key work. */
   addresses: Partial<Record<NetworkName, string>>;
   /** Stake address per network. */
@@ -59,20 +69,38 @@ export function assertWalletName(name: string): string {
 }
 
 /**
- * Refuse to hold or use a key on mainnet.
+ * Refuse to use a *readable* key on mainnet.
  *
- * Storage is unencrypted, so a mainnet key here would be a real risk sitting in a
- * developer's home directory. Refusing is honest; pretending otherwise is not.
+ * The original rule was that mainnet is refused outright, because storage was
+ * unencrypted and a real-money key sitting readable in a home directory is a
+ * real risk. That reasoning was never about mainnet as such — it was about the
+ * phrase being readable. So the rule now says what it always meant: an encrypted
+ * wallet may be used on mainnet, and a plaintext one may not.
+ *
+ * `wallet` is optional so callers with no key in hand (an address lookup) are
+ * unaffected — those never reach here.
  */
-export function assertNotMainnet(network: NetworkName): void {
-  if (network === 'mainnet') {
-    throw new AdaError(
-      'mainnet_refused',
-      'this tool will not hold or use a wallet on mainnet',
-      EXIT_INVALID_ARGS,
-      'wallet keys are stored unencrypted; use devnet, preprod or preview',
-    );
-  }
+export function assertNotMainnet(network: NetworkName, wallet?: StoredWallet): void {
+  if (network !== 'mainnet') return;
+  if (wallet?.sealed !== undefined) return;
+  throw new AdaError(
+    'mainnet_refused',
+    'this tool will not use a plaintext wallet on mainnet',
+    EXIT_INVALID_ARGS,
+    'the recovery phrase is stored in the clear. Encrypt it first — '
+    + '`ada wallet encrypt <name>` with ADA_WALLET_PASSPHRASE set — or use devnet, preprod or preview',
+  );
+}
+
+/**
+ * A wallet with its phrase available, decrypting if it is sealed.
+ *
+ * Every consumer needs the phrase and none of them should each learn how the
+ * keystore works, so this is the one place that opens one.
+ */
+export function unsealWallet(wallet: StoredWallet): StoredWallet {
+  if (wallet.sealed === undefined) return wallet;
+  return { ...wallet, mnemonic: openSealed(wallet.sealed, passphraseFromEnv()) };
 }
 
 export function listWallets(): StoredWallet[] {
@@ -93,10 +121,15 @@ function readWallet(name: string): StoredWallet | undefined {
   try {
     const raw = readFileSync(walletPath(name), 'utf-8');
     const parsed = JSON.parse(raw) as Partial<StoredWallet>;
-    if (!parsed.mnemonic) return undefined;
+    // A wallet is its key material: either a readable phrase or a sealed one.
+    // Requiring the phrase specifically is what made an encrypted wallet read as
+    // no wallet at all — the guard is against a half-written file, and a sealed
+    // wallet is not one.
+    if (!parsed.mnemonic && !parsed.sealed) return undefined;
     return {
       name,
-      mnemonic: parsed.mnemonic,
+      mnemonic: parsed.mnemonic ?? '',
+      ...(parsed.sealed ? { sealed: parsed.sealed } : {}),
       addresses: parsed.addresses ?? {},
       stakeAddresses: parsed.stakeAddresses ?? {},
       accountIndex: parsed.accountIndex ?? 0,

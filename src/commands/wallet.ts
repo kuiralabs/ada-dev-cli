@@ -15,10 +15,13 @@ import {
   walletExists, rememberAddresses, walletPath, type StoredWallet,
 } from '../lib/wallet-store.ts';
 import { makeProvider, openWallet, addressesOf } from '../lib/mesh.ts';
+import { seal, open, sameSecret, passphraseFromEnv, PASSPHRASE_ENV } from '../lib/keystore.ts';
+import { EXIT_INTERNAL } from '../lib/exit-codes.ts';
+import { AdaError } from '../lib/errors.ts';
 import { fields, heading, ok, warn, emphasis } from '../ui/format.ts';
 import { dim } from '../ui/colors.ts';
 
-const SUBCOMMANDS = ['generate', 'import', 'list', 'use', 'info', 'remove'] as const;
+const SUBCOMMANDS = ['generate', 'import', 'encrypt', 'list', 'use', 'info', 'remove'] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number];
 
 /**
@@ -40,6 +43,7 @@ export default async function wallet(args: Args): Promise<void> {
   switch (sub as Subcommand) {
     case 'generate': return generate(args);
     case 'import': return importWallet(args);
+    case 'encrypt': return encryptWallet(args);
     case 'list': return list(args);
     case 'use': return use(args);
     case 'info': return info(args);
@@ -224,6 +228,56 @@ async function deriveOrExplain(
     }
     throw err;
   }
+}
+
+/**
+ * Seal a wallet's recovery phrase at rest.
+ *
+ * The passphrase comes from ADA_WALLET_PASSPHRASE. Not a prompt, because no path
+ * an agent needs may block on one; not an argument, because command lines land
+ * in shell history and in `ps` output for every process on the machine.
+ *
+ * This is what lets a wallet be used on mainnet: the refusal elsewhere is about
+ * the phrase being readable, so it lifts exactly when it stops being readable.
+ */
+async function encryptWallet(args: Args): Promise<void> {
+  const json = hasFlag(args, 'json');
+  const name = assertWalletName(args.positionals[1] ?? requireName());
+  const stored = loadWallet(name);
+
+  if (stored.sealed !== undefined) {
+    throw configError(`wallet ${name} is already encrypted`,
+      'to change the passphrase, import the phrase again under a new name');
+  }
+
+  const passphrase = passphraseFromEnv();
+  const sealed = seal(stored.mnemonic, passphrase);
+
+  // Prove the seal opens before dropping the only readable copy. Sealing and
+  // then failing to open would destroy the wallet, and the phrase is the wallet.
+  if (!sameSecret(open(sealed, passphrase), stored.mnemonic)) {
+    throw new AdaError('keystore_roundtrip_failed',
+      'the encrypted phrase did not decrypt back to the original',
+      EXIT_INTERNAL,
+      'nothing was written; the wallet is untouched');
+  }
+
+  const { mnemonic: _dropped, ...rest } = stored;
+  saveWallet({ ...rest, mnemonic: '', sealed });
+
+  if (json) {
+    writeJson({ name, encrypted: true, kdf: sealed.kdf, cipher: sealed.cipher, keys: walletPath(name) });
+    return;
+  }
+  process.stdout.write(ok(`encrypted wallet ${emphasis(name)}`) + '\n');
+  process.stdout.write(fields([
+    ['kdf', `${sealed.kdf} (N=${sealed.n}, r=${sealed.r}, p=${sealed.p})`],
+    ['cipher', sealed.cipher],
+    ['keys', walletPath(name)],
+  ]) + '\n');
+  process.stdout.write('\n' + warn(
+    `keep ${PASSPHRASE_ENV} safe — there is no recovery path for it, and without it `
+    + 'this wallet cannot be opened') + '\n');
 }
 
 async function list(args: Args): Promise<void> {

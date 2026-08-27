@@ -213,7 +213,7 @@ export const COMMANDS: CommandDoc[] = [
   },
   {
     name: 'wallet',
-    usage: 'ada wallet <generate|import|list|use|info|remove> [name]',
+    usage: 'ada wallet <generate|import|encrypt|list|use|info|remove> [name]',
     summary: 'Manage wallets',
     implemented: true,
     detail:
@@ -228,6 +228,7 @@ export const COMMANDS: CommandDoc[] = [
     examples: [
       'ada wallet generate alice',
       'ada wallet import trader < phrase.txt   # the phrase is read from stdin, never an argument',
+      'ada wallet encrypt trader   # seals the phrase; needs ADA_WALLET_PASSPHRASE set',
       'ada wallet use bob',
       'ada wallet remove alice --yes',
     ],

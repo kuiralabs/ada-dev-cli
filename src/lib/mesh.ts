@@ -9,7 +9,7 @@ import type { OfflineEvaluatorScalus } from '@meshsdk/core-cst';
 import type { NetworkName, ResolvedNetwork } from './cli-config.ts';
 import { configError, networkError, AdaError } from './errors.ts';
 import { EXIT_INTERNAL } from './exit-codes.ts';
-import { assertNotMainnet, type StoredWallet } from './wallet-store.ts';
+import { assertNotMainnet, unsealWallet, type StoredWallet } from './wallet-store.ts';
 import { dim } from '../ui/colors.ts';
 import { resolveSlotConfig, describeSlotConfig } from './slot-config.ts';
 
@@ -106,15 +106,18 @@ export async function openWallet(
   network: ResolvedNetwork,
   provider: Provider,
 ): Promise<MeshWallet> {
-  assertNotMainnet(network.name);
+  assertNotMainnet(network.name, stored);
 
-  const words = stored.mnemonic.trim().split(/\s+/);
+  // Sealed wallets are opened here and nowhere else, so the phrase exists in
+  // memory for exactly as long as the wallet does.
+  const opened = unsealWallet(stored);
+  const words = opened.mnemonic.trim().split(/\s+/);
   const wallet = new MeshWallet({
     networkId: networkId(network.name),
     fetcher: provider,
     submitter: provider,
     key: { type: 'mnemonic', words },
-    accountIndex: stored.accountIndex,
+    accountIndex: opened.accountIndex,
   });
 
   try {
