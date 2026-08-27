@@ -473,7 +473,7 @@ export function selectCollateral(utxos: UTxO[], requiredLovelace: bigint): UTxO 
   if (sufficient.length === 0) {
     const largest = pure.map(lovelaceOf).reduce((a, b) => (a > b ? a : b), 0n);
     throw new AdaError('insufficient_collateral',
-      `collateral needs ${formatAda(requiredLovelace)} ADA; largest pure-ADA UTxO holds ${formatAda(largest)}`,
+      `collateral needs ${formatAda(requiredLovelace)}; largest pure-ADA UTxO holds ${formatAda(largest)}`,
       EXIT_CHAIN_REJECTED,
       'collateral is a percentage of the fee and is only taken if the script fails');
   }

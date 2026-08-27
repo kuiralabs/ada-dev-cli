@@ -380,7 +380,7 @@ export const COMMANDS: CommandDoc[] = [
       { flag: '--path <dir>', description: 'the project directory to work in — every subcommand; defaults to the current one' },
       { flag: '--continue <ada>', description: 'value returned to the script, carrying its state forward (unlock)' },
       { flag: '--continue-datum <json>', description: 'the new state on that continuing output (unlock)' },
-      { flag: '--pay <addr>:<ada>', description: 'pay a third party in the same transaction — a refund, a payout (unlock); comma-separate several' },
+      { flag: '--pay <addr>:<ada>', description: 'pay a third party in the same transaction — a refund, a payout, an asset-priced settlement (unlock); also <addr>:<unit>:<qty> to pay a native asset, whose output is topped up to the ledger minimum; comma-separate several' },
       { flag: '--amount <ada>', description: 'how much to lock' },
       { flag: '--datum-signer', description: 'datum holding your own public key hash (lock)' },
       { flag: '--datum <json>', description: 'datum as Plutus data JSON (lock); the original datum (unlock, hash-stored only)' },

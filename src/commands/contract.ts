@@ -17,11 +17,12 @@ import { EXIT_CHAIN_REJECTED, EXIT_INTERNAL } from '../lib/exit-codes.ts';
 import { writeJson } from '../lib/json-output.ts';
 import { openActive, type ActiveContext } from '../lib/active-wallet.ts';
 import { makeTxBuilder, makeEvaluator, costModelsFor, withoutCostModelNoise, assertBudgetCovers, rawEvaluate, declaredExUnits, type Provider } from '../lib/mesh.ts';
-import { signAndSubmit, translateBuildFailure, translateHorizon, selectCollateral, requiredCollateral, assertMeetsMinValue, assertRecipient } from '../lib/tx-common.ts';
+import { signAndSubmit, translateBuildFailure, translateHorizon, selectCollateral, requiredCollateral, assertMeetsMinValue, assertRecipient, withMinValue } from '../lib/tx-common.ts';
 import { adaToLovelace, formatAda, parseSignedQuantity, LOVELACE_UNIT } from '../lib/amount.ts';
 import { resolveValidity, assertValidityShape, parseOutputRefs, parseSigners, type ValidityWindow } from '../lib/validity.ts';
 import { fetchTip } from '../lib/mesh.ts';
-import { assertAssetName } from './asset.ts';
+import { assertAssetName, parseAssetPair } from './asset.ts';
+import { formatAsset } from '../lib/assets.ts';
 
 import {
   loadBlueprint, selectValidator, scriptIdentity, scriptBytes, parseParams,
@@ -351,7 +352,7 @@ async function lock(args: Args): Promise<void> {
     unsigned = await build();
   } catch (err) {
     throw translateBuildFailure(err, {
-      what: `lock ${formatAda(lovelace)} ADA at ${identity.address}`
+      what: `lock ${formatAda(lovelace)} at ${identity.address}`
         + (mintAlong ? ` minting ${mintAlong.describe}` : ''),
       minValueHint: 'a script output must still hold the minimum ADA its size demands',
     });
@@ -378,7 +379,7 @@ async function lock(args: Args): Promise<void> {
     ['network', ctx.network.name],
     ['from', ctx.stored.name],
     ['to script', identity.address],
-    ['amount', `${formatAda(lovelace)} ADA`],
+    ['amount', formatAda(lovelace)],
     ['datum', datum.describe],
     ['encoding', asHash ? 'hash — keep the datum, the chain will not store it' : 'inline'],
     ...(mintAlong ? [['minted', mintAlong.describe] as [string, string]] : []),
@@ -502,9 +503,11 @@ interface CarryOn {
 }
 
 /** Lovelace to an ordinary address, alongside whatever else the transaction does. */
-interface Payout {
+export interface Payout {
   address: string;
   lovelace: bigint;
+  /** Native assets paid alongside, for a validator that wants something other than ADA. */
+  assets: Array<{ unit: string; quantity: bigint }>;
 }
 
 /**
@@ -729,17 +732,66 @@ function readPayouts(args: Args): Payout[] {
   if (!raw) return [];
 
   return raw.split(',').map((p) => p.trim()).filter((p) => p !== '').map((spec) => {
-    // Split on the last colon: a bech32 address contains none, but saying so
-    // explicitly costs nothing and survives a future address format that does.
-    const at = spec.lastIndexOf(':');
-    if (at <= 0) {
-      throw usageError(`--pay expects <address>:<ada>, got: ${spec}`,
-        'for example --pay addr_test1...:12.5');
+    // Two shapes, told apart by how many colons there are — a bech32 address
+    // contains none, so this is unambiguous, and an unexpected count is named
+    // rather than guessed at:
+    //   <address>:<ada>          pay ADA
+    //   <address>:<unit>:<qty>   pay a native asset
+    const parts = spec.split(':');
+    if (parts.length < 2 || parts.length > 3 || parts[0] === '') {
+      throw usageError(
+        `--pay expects <address>:<ada> or <address>:<unit>:<quantity>, got: ${spec}`,
+        'for example --pay addr_test1...:12.5, or --pay addr_test1...:<policy><hexname>:100',
+      );
     }
-    const address = spec.slice(0, at);
+    const [address] = parts;
     assertRecipient(address, { what: '--pay: not a Cardano address' });
-    return { address, lovelace: adaToLovelace(spec.slice(at + 1)) };
+    if (parts.length === 2) {
+      return { address, lovelace: adaToLovelace(parts[1]), assets: [] };
+    }
+    // An asset payout: the ADA the output must still carry is attached at build
+    // time and reported, never folded in silently.
+    const { unit, quantity } = parseAssetPair(`${parts[1]}:${parts[2]}`);
+    return { address, lovelace: 0n, assets: [{ unit, quantity }] };
   });
+}
+
+/** A payout as the ledger will see it, and whatever the ledger itself added. */
+export interface PayoutOutput {
+  address: string;
+  amount: Array<{ unit: string; quantity: string }>;
+  /** ADA attached to satisfy min-UTxO, out of the payer's own pocket. */
+  adaAttached: bigint;
+}
+
+/**
+ * Turn payouts into outputs.
+ *
+ * An output carrying native assets must also hold ADA, so an asset payout is
+ * topped up to the ledger's minimum — which is why the top-up is reported: it
+ * leaves the payer's pocket, and is not part of what the recipient was promised.
+ * An ADA payout is passed through exactly as written. The caller named a number
+ * there, and quietly paying more than they said is worse than the ledger
+ * refusing an output that is too small.
+ */
+export function payoutOutputs(payouts: readonly Payout[], coinsPerUtxoSize: number): PayoutOutput[] {
+  return payouts.map((payout) => {
+    const lovelace = { unit: LOVELACE_UNIT, quantity: payout.lovelace.toString() };
+    if (payout.assets.length === 0) {
+      return { address: payout.address, amount: [lovelace], adaAttached: 0n };
+    }
+    const requested = [lovelace, ...payout.assets.map((a) => ({ unit: a.unit, quantity: a.quantity.toString() }))];
+    return { address: payout.address, ...withMinValue(payout.address, requested, coinsPerUtxoSize) };
+  });
+}
+
+/** One payout, read back the way the payer needs to check it. */
+function describePayout(p: PayoutOutput): string {
+  const value = p.amount
+    .map((a) => (a.unit === LOVELACE_UNIT ? formatAda(BigInt(a.quantity)) : `${a.quantity} ${formatAsset(a.unit)}`))
+    .join(' + ');
+  const added = p.adaAttached > 0n ? ` (includes ${formatAda(p.adaAttached)} the ledger requires for a token output)` : '';
+  return `${value} to ${p.address}${added}`;
 }
 
 /** Build the spending transaction. One definition, two callers. */
@@ -790,8 +842,8 @@ async function buildSpend(ctx: ActiveContext, spend: SpendContext, fee?: string)
         .txOutInlineDatumValue(spend.carryOn.datum as never);
     }
 
-    for (const payout of spend.payouts) {
-      b.txOut(payout.address, [{ unit: LOVELACE_UNIT, quantity: payout.lovelace.toString() }]);
+    for (const { address, amount } of payoutOutputs(spend.payouts, spend.protocol.coinsPerUtxoSize)) {
+      b.txOut(address, amount);
     }
 
     // A --signer naming this wallet's own key would duplicate the hash added
@@ -856,6 +908,9 @@ async function unlock(args: Args): Promise<void> {
     ? await signAndSubmit(ctx, unsigned, (fee) => buildSpend(ctx, spend, fee))
     : null;
   const recovered = target.output.amount.find((a) => a.unit === LOVELACE_UNIT)?.quantity ?? '0';
+  // Money leaving for a third party was never reported, so a caller could not
+  // tell what a --pay actually sent — least of all the ADA the ledger attaches.
+  const paying = payoutOutputs(spend.payouts, spend.protocol.coinsPerUtxoSize);
 
   if (hasFlag(args, 'json')) {
     writeJson({
@@ -871,6 +926,13 @@ async function unlock(args: Args): Promise<void> {
       ...(spend.extras.readOnly.length ? { readOnly: spend.extras.readOnly.map((r) => `${r.txHash}#${r.index}`) } : {}),
       ...(spend.extras.signers.length ? { requiredSigners: spend.extras.signers } : {}),
       ...(spend.mintAlong ? { minted: spend.mintAlong.describe, policyId: spend.identity.hash } : {}),
+      ...(paying.length
+        ? { payouts: paying.map((p) => ({
+            address: p.address,
+            amount: p.amount,
+            ...(p.adaAttached > 0n ? { adaAttached: formatAda(p.adaAttached), adaAttachedLovelace: p.adaAttached.toString() } : {}),
+          })) }
+        : {}),
       collateral: refOf(collateral),
       submitted, ...(txHash ? { txHash } : {}),
     });
@@ -882,10 +944,11 @@ async function unlock(args: Args): Promise<void> {
     ['network', ctx.network.name],
     ['to', ctx.stored.name],
     ['spending', shortRef(target)],
-    ['amount', `${formatAda(BigInt(recovered))} ADA`],
+    ['amount', formatAda(BigInt(recovered))],
     ['redeemer', redeemer.describe],
     ['collateral', shortRef(collateral)],
     ...(spend.mintAlong ? [['minted', spend.mintAlong.describe] as [string, string]] : []),
+    ...paying.map((p) => ['paying', describePayout(p)] as [string, string]),
   ]) + '\n');
   if (!submitted) {
     process.stderr.write('\n' + dim('  Nothing submitted. Add --yes to send it.') + '\n');

@@ -11,7 +11,7 @@ import { AdaError } from '../lib/errors.ts';
 import { requiredCollateral } from '../lib/tx-common.ts';
 import { parseSignedQuantity } from '../lib/amount.ts';
 import { readFileSync } from 'node:fs';
-import contract, { datumModeOf } from '../commands/contract.ts';
+import contract, { datumModeOf, payoutOutputs } from '../commands/contract.ts';
 import type { UTxO } from '@meshsdk/core';
 import { TOOLS, CONSENT_TOOLS, byName } from '../lib/mcp/tools.ts';
 
@@ -397,5 +397,56 @@ describe('--wallet must never be silently ignored', () => {
   it('never falls straight from a positional to the active wallet', () => {
     // The shape of the original bug.
     expect(source).not.toMatch(/positionals\[1\]\s*\?\?\s*config\.activeWallet/);
+  });
+});
+
+describe('--pay settles in native assets, not only ADA', () => {
+  const bp = 'src/__tests__/fixtures';
+
+  // An offer priced in a token could be created and found but never filled: the
+  // only way to pay a third party took ADA. The two shapes are told apart by how
+  // many colons a bech32 address does not contain.
+  it('rejects a malformed payout by naming both shapes', async () => {
+    await expect(run(['unlock', '--redeemer-message', 'x', '--pay', 'addr_test1abc', '--blueprint', bp]))
+      .rejects.toThrow(/<address>:<ada> or <address>:<unit>:<quantity>/);
+  });
+
+  it('rejects more colons than either shape allows', async () => {
+    await expect(run(['unlock', '--redeemer-message', 'x',
+      '--pay', 'addr_test1abc:unit:1:extra', '--blueprint', bp]))
+      .rejects.toThrow(/expects <address>/);
+  });
+
+  it('still rejects a payout that is not an address at all', async () => {
+    await expect(run(['unlock', '--redeemer-message', 'x', '--pay', 'notanaddress:5', '--blueprint', bp]))
+      .rejects.toThrow(/not a Cardano address/);
+  });
+});
+
+describe('what a payout output actually holds', () => {
+  // A real address: min-UTxO is computed from the serialized output, so a
+  // placeholder would not tell us anything about the number.
+  const ADDR = 'addr_test1qpf8cud6excflj787pgkfe0vlkpj5x7tz2fgsdtak69033dmha29vf5ajuhcslaaru44844juzssnkds30r300zwee4qkdrx2v';
+  const FOO = '2b0f0c0a61f4525664aa2478e78358d67d783c58607e67540c521fe5464f4f';
+  const COINS_PER_UTXO_SIZE = 4310;
+
+  it('pays an ADA payout exactly what was asked, never more', () => {
+    // 0.5 ADA is below min-UTxO. Topping it up would pay the recipient more
+    // than the caller wrote, out of the caller's own pocket, silently.
+    const [out] = payoutOutputs([{ address: ADDR, lovelace: 500_000n, assets: [] }], COINS_PER_UTXO_SIZE);
+    expect(out.amount).toEqual([{ unit: 'lovelace', quantity: '500000' }]);
+    expect(out.adaAttached).toBe(0n);
+  });
+
+  it('attaches the ADA a token output cannot exist without, and reports it', () => {
+    const [out] = payoutOutputs(
+      [{ address: ADDR, lovelace: 0n, assets: [{ unit: FOO, quantity: 50n }] }],
+      COINS_PER_UTXO_SIZE,
+    );
+    expect(out.amount).toContainEqual({ unit: FOO, quantity: '50' });
+    const attached = BigInt(out.amount.find((a) => a.unit === 'lovelace')?.quantity ?? '0');
+    expect(attached).toBeGreaterThan(0n);
+    // The whole of it came from the payer: the payout named no ADA at all.
+    expect(out.adaAttached).toBe(attached);
   });
 });
