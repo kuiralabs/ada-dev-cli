@@ -18,7 +18,7 @@ import { makeProvider, openWallet, addressesOf } from '../lib/mesh.ts';
 import { fields, heading, ok, warn, emphasis } from '../ui/format.ts';
 import { dim } from '../ui/colors.ts';
 
-const SUBCOMMANDS = ['generate', 'list', 'use', 'info', 'remove'] as const;
+const SUBCOMMANDS = ['generate', 'import', 'list', 'use', 'info', 'remove'] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number];
 
 /**
@@ -39,6 +39,7 @@ export default async function wallet(args: Args): Promise<void> {
 
   switch (sub as Subcommand) {
     case 'generate': return generate(args);
+    case 'import': return importWallet(args);
     case 'list': return list(args);
     case 'use': return use(args);
     case 'info': return info(args);
@@ -100,6 +101,129 @@ async function generate(args: Args): Promise<void> {
     ['keys', walletPath(name)],
   ]) + '\n');
   process.stdout.write('\n' + warn('the recovery phrase is stored unencrypted — development keys only') + '\n');
+}
+
+/**
+ * Take an existing recovery phrase into the named-wallet model.
+ *
+ * The phrase is read from **stdin**, never an argument: an argument lands in
+ * shell history and is visible in `ps` to every process on the machine, which is
+ * a poor place for key material even by the standards of a development tool.
+ *
+ *   ada wallet import trader < phrase.txt
+ *   pbpaste | ada wallet import trader
+ *
+ * Everything after the phrase is the same work `generate` does, so a wallet that
+ * arrived this way is indistinguishable from one this tool created.
+ */
+async function importWallet(args: Args): Promise<void> {
+  const json = hasFlag(args, 'json');
+  const name = assertWalletName(args.positionals[1] ?? requireName());
+
+  if (walletExists(name) && !hasFlag(args, 'force')) {
+    throw configError(
+      `a wallet named ${name} already exists`,
+      'choose another name, or pass --force to replace it',
+    );
+  }
+
+  const mnemonic = normalizeMnemonic(await readStdin());
+  const config = loadConfig();
+  const network = resolveNetwork(config, flagValue(args, 'network'));
+
+  const stored: StoredWallet = {
+    name,
+    mnemonic,
+    addresses: {},
+    stakeAddresses: {},
+    accountIndex: 0,
+    createdAt: new Date().toISOString(),
+  };
+
+  // Derive BEFORE writing anything. A phrase with one word mistyped has the
+  // right word count and fails only here; saving first would leave a wallet file
+  // for a phrase that was refused, which the user then has to know to delete.
+  const provider = makeProvider(network);
+  const { payment, stake } = await deriveOrExplain(stored, network, provider);
+
+  saveWallet(stored);
+  rememberAddresses(stored, network.name, payment, stake);
+  saveConfig({ ...config, activeWallet: name });
+
+  if (json) {
+    // The phrase is never echoed: the caller already has it, and a copy in a log
+    // or a captured stdout is a copy that outlives the reason for it.
+    writeJson({
+      name, network: network.name, paymentAddress: payment, stakeAddress: stake,
+      active: true, imported: true, createdAt: stored.createdAt,
+      mnemonicStored: walletPath(name),
+    });
+    return;
+  }
+
+  process.stdout.write(ok(`imported wallet ${emphasis(name)} and made it active`) + '\n');
+  process.stdout.write(fields([
+    ['network', network.name],
+    ['payment', payment],
+    ['stake', stake],
+    ['keys', walletPath(name)],
+  ]) + '\n');
+  process.stdout.write('\n' + warn('the recovery phrase is stored unencrypted — development keys only') + '\n');
+}
+
+/** The phrase, from stdin. Refuses an interactive terminal rather than hanging. */
+async function readStdin(): Promise<string> {
+  if (process.stdin.isTTY) {
+    throw usageError(
+      'the recovery phrase is read from stdin',
+      'pipe it in, so it never reaches shell history: ada wallet import <name> < phrase.txt',
+    );
+  }
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+/** The phrase with its incidental whitespace and casing removed. */
+function normalizeMnemonic(raw: string): string {
+  const words = raw.trim().toLowerCase().split(/\s+/).filter((w) => w !== '');
+  if (words.length !== EXPECTED_WORDS) {
+    throw usageError(
+      `expected a ${EXPECTED_WORDS}-word recovery phrase, got ${words.length}`,
+      'Cardano wallets use 24 words',
+    );
+  }
+  return words.join(' ');
+}
+
+/**
+ * Derive the addresses, turning a rejected phrase into an answer about the phrase.
+ *
+ * BIP-39's checksum is the check that matters, and the key derivation already
+ * enforces it — so no separate word-list dependency is needed to catch a
+ * mistyped word. What derivation does not do is explain itself: it says
+ * "Invalid mnemonic checksum", which reads as an internal fault rather than
+ * "you typed a word wrong". The distinction is worth making, because a phrase
+ * that is merely *different* would derive a perfectly good address for a wallet
+ * the user does not own, and anything sent there is gone.
+ */
+async function deriveOrExplain(
+  stored: StoredWallet,
+  network: Parameters<typeof openWallet>[1],
+  provider: Parameters<typeof openWallet>[2],
+): Promise<{ payment: string; stake: string }> {
+  try {
+    return await addressesOf(await openWallet(stored, network, provider));
+  } catch (err) {
+    if (/mnemonic|checksum/i.test(String((err as Error)?.message ?? err))) {
+      throw usageError(
+        'that is not a valid recovery phrase — a word is misspelled, or the words are out of order',
+        'the BIP-39 checksum did not match. A single wrong word would otherwise derive a '
+        + 'different wallet rather than fail, so it is refused here',
+      );
+    }
+    throw err;
+  }
 }
 
 async function list(args: Args): Promise<void> {

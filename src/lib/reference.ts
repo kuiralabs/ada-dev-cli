@@ -213,7 +213,7 @@ export const COMMANDS: CommandDoc[] = [
   },
   {
     name: 'wallet',
-    usage: 'ada wallet <generate|list|use|info|remove> [name]',
+    usage: 'ada wallet <generate|import|list|use|info|remove> [name]',
     summary: 'Manage wallets',
     implemented: true,
     detail:
@@ -223,9 +223,14 @@ export const COMMANDS: CommandDoc[] = [
       + 'addresses are not interchangeable.\n\nA freshly generated wallet becomes the active one — it is what you just asked for, and leaving the previous one active is a reliable source of confusion. `wallet use` switches back, and `wallet list` marks the active one.',
     flags: [
       { flag: '--show-mnemonic', description: 'print the recovery phrase (wallet info only)' },
-      { flag: '--force', description: 'replace an existing wallet of the same name (generate only)' },
+      { flag: '--force', description: 'replace an existing wallet of the same name (generate, import)' },
     ],
-    examples: ['ada wallet generate alice', 'ada wallet use bob', 'ada wallet remove alice --yes'],
+    examples: [
+      'ada wallet generate alice',
+      'ada wallet import trader < phrase.txt   # the phrase is read from stdin, never an argument',
+      'ada wallet use bob',
+      'ada wallet remove alice --yes',
+    ],
   },
   {
     name: 'balance',
