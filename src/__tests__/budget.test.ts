@@ -18,7 +18,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { assertBudgetCovers, declaredExUnits } from '../lib/mesh.ts';
+import { assertBudgetCovers, declaredExUnits, underDeclared, redeemerKey } from '../lib/mesh.ts';
 import { AdaError } from '../lib/errors.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -28,9 +28,16 @@ const TX = readFileSync(join(HERE, 'fixtures', 'under-declared-budget.tx'), 'utf
 const DECLARED = { mem: 87_767, steps: 29_702_744 };
 const NEEDED = { mem: 102_021, steps: 33_859_095 };
 
-/** An evaluator reporting what the finished transaction costs. */
+/**
+ * An evaluator reporting what the finished transaction costs.
+ *
+ * Its actions carry `tag` and `index` because real ones do: budgets are matched
+ * to redeemers by purpose and position, and a mock without them would let a
+ * matching bug pass here while failing on chain. The fixture runs one script,
+ * spend #0.
+ */
 const needing = (budget: { mem: number; steps: number }) =>
-  ({ evaluateTx: vi.fn().mockResolvedValue([{ budget }]) }) as never;
+  ({ evaluateTx: vi.fn().mockResolvedValue([{ tag: 'SPEND', index: 0, budget }]) }) as never;
 
 describe('reading a budget back out of a transaction', () => {
   it('reports what the transaction actually declares', async () => {
@@ -94,5 +101,46 @@ describe('an under-declared execution budget', () => {
     // to pass. The chain remains the authority.
     const broken = { evaluateTx: vi.fn().mockRejectedValue(new Error('nope')) } as never;
     await expect(assertBudgetCovers(broken, TX)).resolves.toBeUndefined();
+  });
+});
+
+describe('a budget is checked per redeemer, not in total', () => {
+  const spend0 = { tag: 'SPEND', index: 0, mem: 100, steps: 1000 };
+  const spend1 = { tag: 'SPEND', index: 1, mem: 100, steps: 1000 };
+  const mint0 = { tag: 'MINT', index: 0, mem: 50, steps: 500 };
+
+  // The ledger checks each redeemer against its own budget, so one script's
+  // surplus cannot cover another's shortfall. Comparing totals said this
+  // transaction was fine, and a node would have run the second spend, stopped
+  // part way, and reported it as a failed validation.
+  it('catches a shortfall another redeemer\'s surplus would hide in the total', () => {
+    const declared = new Map([
+      [redeemerKey('Spend', 0), { mem: 300, steps: 3000 }],  // generous
+      [redeemerKey('Spend', 1), { mem: 10, steps: 100 }],    // short
+    ]);
+    const short = underDeclared([spend0, spend1], declared);
+    expect(short.map((s) => s.key)).toEqual(['spend #1']);
+  });
+
+  it('tells a spend from a mint at the same index', () => {
+    // Indices restart per purpose, so matching on the number alone compares a
+    // spend's budget against a mint's.
+    const declared = new Map([
+      [redeemerKey('Spend', 0), { mem: 100, steps: 1000 }],
+      [redeemerKey('Mint', 0), { mem: 1, steps: 1 }],
+    ]);
+    expect(underDeclared([spend0, mint0], declared).map((s) => s.key)).toEqual(['mint #0']);
+  });
+
+  it('treats a redeemer the transaction never declares as declaring nothing', () => {
+    expect(underDeclared([spend0], new Map()).map((s) => s.key)).toEqual(['spend #0']);
+  });
+
+  it('is silent when every redeemer covers itself', () => {
+    const declared = new Map([
+      [redeemerKey('Spend', 0), { mem: 100, steps: 1000 }],
+      [redeemerKey('Mint', 0), { mem: 50, steps: 500 }],
+    ]);
+    expect(underDeclared([spend0, mint0], declared)).toEqual([]);
   });
 });

@@ -352,18 +352,74 @@ function withBudgetMargin(
  * evaluated.
  */
 export async function declaredExUnits(txCbor: string): Promise<{ mem: number; steps: number }> {
-  const { Transaction } = await import('@meshsdk/core-cst');
-  const redeemers = Transaction.fromCbor(txCbor as never).witnessSet().redeemers();
-  if (!redeemers) return { mem: 0, steps: 0 };
+  return [...(await declaredPerRedeemer(txCbor)).values()].reduce(
+    (total, u) => ({ mem: total.mem + u.mem, steps: total.steps + u.steps }),
+    { mem: 0, steps: 0 },
+  );
+}
 
-  let mem = 0;
-  let steps = 0;
+/**
+ * One canonical name for a redeemer's purpose, whichever side spelled it.
+ *
+ * The evaluator answers in Mesh's `RedeemerTagType` ("SPEND"), the serialized
+ * transaction in the CST enum ("Spend"), and two of them do not even agree on
+ * the word ("VOTE" against "Voting"). A budget comparison has to line up the two
+ * lists, and an index alone will not do it: indices restart per purpose, so a
+ * spend and a mint both sit at 0.
+ */
+const REDEEMER_PURPOSE: Readonly<Record<string, string>> = {
+  SPEND: 'spend', MINT: 'mint', CERT: 'cert', REWARD: 'reward', VOTE: 'vote', PROPOSE: 'propose',
+  Spend: 'spend', Mint: 'mint', Cert: 'cert', Reward: 'reward', Voting: 'vote', Proposing: 'propose',
+};
+
+/** How a redeemer is addressed when comparing two accounts of the same transaction. */
+export const redeemerKey = (tag: unknown, index: number): string =>
+  `${REDEEMER_PURPOSE[String(tag)] ?? String(tag).toLowerCase()} #${index}`;
+
+/** What each redeemer in a finished transaction declares it may spend. */
+export async function declaredPerRedeemer(
+  txCbor: string,
+): Promise<Map<string, { mem: number; steps: number }>> {
+  const { Transaction, RedeemerTag } = await import('@meshsdk/core-cst');
+  const declared = new Map<string, { mem: number; steps: number }>();
+  const redeemers = Transaction.fromCbor(txCbor as never).witnessSet().redeemers();
+  if (!redeemers) return declared;
+
   for (const redeemer of redeemers.values()) {
     const units = redeemer.exUnits();
-    mem += Number(units.mem());
-    steps += Number(units.steps());
+    const tag = (RedeemerTag as Record<number, string>)[Number(redeemer.tag())];
+    declared.set(redeemerKey(tag, Number(redeemer.index())), {
+      mem: Number(units.mem()),
+      steps: Number(units.steps()),
+    });
   }
-  return { mem, steps };
+  return declared;
+}
+
+/**
+ * Which redeemers declare less than they need.
+ *
+ * Per redeemer, not in total: the ledger checks each one against its own budget,
+ * so one script's surplus cannot cover another's shortfall. While a transaction
+ * ran a single script the two questions had the same answer, which is why
+ * comparing totals was enough until batches made several the normal case.
+ *
+ * A redeemer the transaction does not declare at all counts as declaring
+ * nothing, rather than being skipped.
+ */
+export function underDeclared(
+  needed: readonly RedeemerCost[],
+  declared: ReadonlyMap<string, { mem: number; steps: number }>,
+): Array<{ key: string; needs: { mem: number; steps: number }; declares: { mem: number; steps: number } }> {
+  const short = [];
+  for (const action of needed) {
+    const key = redeemerKey(action.tag, action.index);
+    const has = declared.get(key) ?? { mem: 0, steps: 0 };
+    if (has.mem < action.mem || has.steps < action.steps) {
+      short.push({ key, needs: { mem: action.mem, steps: action.steps }, declares: has });
+    }
+  }
+  return short;
 }
 
 /**
@@ -421,32 +477,35 @@ export async function assertBudgetCovers(
   evaluator: OfflineEvaluatorScalus,
   txCbor: string,
 ): Promise<void> {
-  let needed: { mem: number; steps: number };
+  let needed: RedeemerCost[];
   try {
     // The raw figure, not the margined one — see RAW_EVALUATE.
     const evaluate = RAW_EVALUATE.get(evaluator) ?? evaluator.evaluateTx.bind(evaluator);
     const actions = await evaluate(txCbor, [], []);
     if (actions.length === 0) return;
-    needed = actions.reduce(
-      (total, a) => ({ mem: total.mem + Number(a.budget.mem), steps: total.steps + Number(a.budget.steps) }),
-      { mem: 0, steps: 0 },
-    );
+    needed = actions.map((a) => ({
+      tag: a.tag, index: a.index, mem: Number(a.budget.mem), steps: Number(a.budget.steps),
+    }));
   } catch {
     return; // Nothing to compare against; the chain remains the authority.
   }
 
-  const declared = await declaredExUnits(txCbor);
-  if (declared.mem >= needed.mem && declared.steps >= needed.steps) return;
+  const short = underDeclared(needed, await declaredPerRedeemer(txCbor));
+  if (short.length === 0) return;
 
   throw new AdaError(
     'budget_under_declared',
-    'the transaction declares less execution budget than its scripts need',
+    short.length === 1
+      ? `${short[0].key} declares less execution budget than it needs`
+      : `${short.length} redeemers declare less execution budget than they need`,
     EXIT_INTERNAL,
     'this is a builder fault rather than anything wrong with the validator — the budget was '
     + 'measured against a draft and the finished transaction costs more. Reported here because '
     + 'a node would run the script, stop part way through, and report it as a failed validation',
-    `declared  ${declared.mem.toLocaleString()} mem, ${declared.steps.toLocaleString()} steps\n`
-    + `needed    ${needed.mem.toLocaleString()} mem, ${needed.steps.toLocaleString()} steps`,
+    short
+      .map((r) => `${r.key}\n  declares  ${r.declares.mem.toLocaleString()} mem, ${r.declares.steps.toLocaleString()} steps\n`
+        + `  needs     ${r.needs.mem.toLocaleString()} mem, ${r.needs.steps.toLocaleString()} steps`)
+      .join('\n'),
   );
 }
 
